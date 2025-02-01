@@ -1,0 +1,60 @@
+{
+    "transport": {
+      "udp_enabled": true,
+      "udp_port": 12000,
+      "tcp_enabled": true,
+      "tcp_port": 12001,
+      "tls_enabled": true,
+      "tls_port": 12002,
+      "tls_cert": "certs/server.crt",
+      "tls_key": "certs/server.key"
+    },
+    "rtp_settings": {
+      "max_bandwidth": 2000,
+      "min_jitter_buffer": 20,
+      "packet_loss_threshold": 3,
+      "encryption": true
+    },
+    "webrtc": {
+      "enabled": true,
+      "webrtc_port": 8443,
+      "stun_servers": [
+        "stun:stun.l.google.com:19302",
+        "stun:stun1.l.google.com:19302"
+      ],
+      "turn_servers": [
+        {
+          "url": "turn:your-turn-server.com:3478",
+          "username": "turnuser",
+          "credential": "turnpass"
+        }
+      ]
+    },
+    "integration": {
+      "opensips_ip": "127.0.0.1",
+      "opensips_port": 5060,
+      "kamailio_ip": "127.0.0.1",
+      "kamailio_port": 5061,
+      "rtpengine_socket": "/var/run/karl/rtpengine.sock",
+      "unix_socket_path": "/var/run/karl/karl.sock",
+      "media_ip": "192.168.1.100",
+      "public_ip": ""
+    },
+    "alert_settings": {
+      "packet_loss_threshold": 5.0,
+      "jitter_threshold": 50.0,
+      "bandwidth_threshold": 1500,
+      "notify_admin": true,
+      "admin_email": "admin@example.com"
+    },
+    "database": {
+      "mysql_dsn": "user:password@tcp(localhost:3306)/rtpdb",
+      "redis_enabled": true,
+      "redis_addr": "localhost:6379",
+      "redis_cleanup_interval": 3600
+    },
+    "srtp": {
+      "srtp_key": "your-base64-encoded-key",
+      "srtp_salt": "your-base64-encoded-salt"
+    }
+  }
