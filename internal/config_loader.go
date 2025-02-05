@@ -2,8 +2,10 @@ package internal
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -11,103 +13,32 @@ import (
 	"time"
 )
 
-// SRTPConfig defines secure RTP settings
-type SRTPConfig struct {
-	Key  string `json:"srtp_key"`
-	Salt string `json:"srtp_salt"`
-}
-
-// DatabaseConfig defines MySQL and Redis settings
-type DatabaseConfig struct {
-	MySQLDSN             string `json:"mysql_dsn"`
-	RedisEnabled         bool   `json:"redis_enabled"`
-	RedisAddr            string `json:"redis_addr"`
-	RedisCleanupInterval int    `json:"redis_cleanup_interval"`
-}
-
-// TransportConfig holds networking settings
-type TransportConfig struct {
-	UDPEnabled bool   `json:"udp_enabled"`
-	UDPPort    int    `json:"udp_port"`
-	TCPEnabled bool   `json:"tcp_enabled"`
-	TCPPort    int    `json:"tcp_port"`
-	TLSEnabled bool   `json:"tls_enabled"`
-	TLSPort    int    `json:"tls_port"`
-	TLSCert    string `json:"tls_cert"`
-	TLSKey     string `json:"tls_key"`
-}
-
-// RTPSettings defines RTP media handling configurations
-type RTPSettings struct {
-	MaxBandwidth        int  `json:"max_bandwidth"`
-	MinJitterBuffer     int  `json:"min_jitter_buffer"`
-	PacketLossThreshold int  `json:"packet_loss_threshold"`
-	Encryption          bool `json:"encryption"`
-	EnablePCAP          bool `json:"enable_pcap"` // Enable PCAP recording
-}
-
-// WebRTCConfig holds WebRTC settings
-type WebRTCConfig struct {
-	Enabled     bool     `json:"enabled"`
-	WebRTCPort  int      `json:"webrtc_port"`
-	StunServers []string `json:"stun_servers"`
-	TurnServers []struct {
-		URL        string `json:"url"`
-		Username   string `json:"username"`
-		Credential string `json:"credential"`
-	} `json:"turn_servers"`
-}
-
-// IntegrationConfig defines SIP proxy settings for OpenSIPS/Kamailio
-type IntegrationConfig struct {
-	OpenSIPSIp      string `json:"opensips_ip"`
-	OpenSIPSPort    int    `json:"opensips_port"`
-	KamailioIp      string `json:"kamailio_ip"`
-	KamailioPort    int    `json:"kamailio_port"`
-	RTPengineSocket string `json:"rtpengine_socket"`
-	MediaIP         string `json:"media_ip"`
-	PublicIP        string `json:"public_ip"`
-}
-
-// AlertSettings defines threshold settings for RTP monitoring
-type AlertSettings struct {
-	PacketLossThreshold float64 `json:"packet_loss_threshold"`
-	JitterThreshold     float64 `json:"jitter_threshold"`
-	BandwidthThreshold  int     `json:"bandwidth_threshold"`
-	NotifyAdmin         bool    `json:"notify_admin"`
-	AdminEmail          string  `json:"admin_email"`
-}
-
-// Config struct holds all settings for Karl
-type Config struct {
-	Transport     TransportConfig   `json:"transport"`
-	RTPSettings   RTPSettings       `json:"rtp_settings"`
-	WebRTC        WebRTCConfig      `json:"webrtc"`
-	Integration   IntegrationConfig `json:"integration"`
-	AlertSettings AlertSettings     `json:"alert_settings"`
-	Database      DatabaseConfig    `json:"database"`
-	SRTP          SRTPConfig        `json:"srtp"`
-}
-
-// Global configuration variable and mutex for safe concurrent access
 var (
 	config      *Config
 	configMutex sync.RWMutex
 )
 
-// LoadConfig reads the configuration file and returns a pointer to a Config struct
+// LoadConfig reads and validates the configuration
 func LoadConfig(filePath string) (*Config, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
 
 	var newConfig Config
 	if err := json.Unmarshal(data, &newConfig); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parse config: %w", err)
 	}
 
-	// If PublicIP is empty, auto-detect it
+	newConfig.LastUpdated = time.Now()
+	if newConfig.Version == "" {
+		newConfig.Version = ConfigVersion
+	}
+
+	if err := ValidateConfig(&newConfig); err != nil {
+		return nil, fmt.Errorf("invalid configuration: %w", err)
+	}
+
 	if newConfig.Integration.PublicIP == "" {
 		detectedIP, err := GetPublicIP()
 		if err != nil {
@@ -121,82 +52,179 @@ func LoadConfig(filePath string) (*Config, error) {
 	return &newConfig, nil
 }
 
-// WatchConfig monitors `config.json` for changes and applies updates in real-time
-func WatchConfig(filePath string) {
-	for {
-		time.Sleep(5 * time.Second) // Check for changes every 5 seconds
+// ValidateConfig performs comprehensive configuration validation
+func ValidateConfig(cfg *Config) error {
+	if cfg.Version == "" {
+		cfg.Version = ConfigVersion
+	}
 
-		newConfig, err := LoadConfig(filePath)
+	if cfg.Transport.UDPEnabled && (cfg.Transport.UDPPort < 1024 || cfg.Transport.UDPPort > 65535) {
+		return fmt.Errorf("invalid UDP port: %d", cfg.Transport.UDPPort)
+	}
+
+	if cfg.Transport.TLSEnabled {
+		if _, err := os.Stat(cfg.Transport.TLSCert); err != nil {
+			return fmt.Errorf("TLS cert file not found: %s", cfg.Transport.TLSCert)
+		}
+		if _, err := os.Stat(cfg.Transport.TLSKey); err != nil {
+			return fmt.Errorf("TLS key file not found: %s", cfg.Transport.TLSKey)
+		}
+	}
+
+	if cfg.RTPSettings.MinJitterBuffer < MinJitterBuffer || cfg.RTPSettings.MinJitterBuffer > MaxJitterBuffer {
+		return fmt.Errorf("invalid jitter buffer size: %d", cfg.RTPSettings.MinJitterBuffer)
+	}
+
+	if cfg.RTPSettings.MaxBandwidth < MinBandwidth || cfg.RTPSettings.MaxBandwidth > MaxBandwidth {
+		return fmt.Errorf("invalid bandwidth: %d", cfg.RTPSettings.MaxBandwidth)
+	}
+
+	if cfg.WebRTC.Enabled {
+		for _, server := range cfg.WebRTC.StunServers {
+			if _, err := net.ResolveUDPAddr("udp", server); err != nil {
+				return fmt.Errorf("invalid STUN server address: %s", server)
+			}
+		}
+	}
+
+	if cfg.Database.RedisEnabled && cfg.Database.RedisAddr == "" {
+		return fmt.Errorf("Redis enabled but address not specified")
+	}
+
+	return nil
+}
+
+// WatchConfig monitors for configuration changes
+func WatchConfig(filePath string) {
+	lastMod := time.Now()
+
+	for {
+		time.Sleep(5 * time.Second)
+
+		info, err := os.Stat(filePath)
 		if err != nil {
-			log.Println("❌ Failed to reload config:", err)
+			log.Printf("❌ Error checking config file: %v", err)
 			continue
 		}
 
-		configMutex.Lock()
-		config = newConfig
-		configMutex.Unlock()
+		if info.ModTime().After(lastMod) {
+			log.Println("📝 Configuration file changed, reloading...")
 
-		ApplyNewConfig(*newConfig)
+			newConfig, err := LoadConfig(filePath)
+			if err != nil {
+				log.Printf("❌ Failed to reload config: %v", err)
+				continue
+			}
 
-		log.Println("🔄 Configuration updated dynamically.")
+			configMutex.Lock()
+			config = newConfig
+			configMutex.Unlock()
+
+			if err := ApplyNewConfig(*newConfig); err != nil {
+				log.Printf("❌ Failed to apply new config: %v", err)
+				continue
+			}
+
+			lastMod = info.ModTime()
+			log.Println("✅ Configuration updated successfully")
+		}
 	}
 }
 
 // ApplyNewConfig applies the configuration dynamically
-func ApplyNewConfig(newConfig Config) {
+func ApplyNewConfig(newConfig Config) error {
 	log.Println("⚙️ Applying new configurations dynamically...")
 
-	// Convert int ports to strings for function compatibility
-	udpPort := strconv.Itoa(newConfig.Transport.UDPPort)
-	tcpPort := strconv.Itoa(newConfig.Transport.TCPPort)
-	tlsPort := strconv.Itoa(newConfig.Transport.TLSPort)
-
-	// Restart RTP Listeners if needed
-	if newConfig.Transport.UDPEnabled {
-		go StartRTPUDPListener(udpPort)
-	} else {
-		StopRTPListener(udpPort)
-	}
-
-	if newConfig.Transport.TCPEnabled {
-		go StartRTPTCPListener(tcpPort)
-	} else {
-		StopRTPListener(tcpPort)
-	}
-
-	if newConfig.Transport.TLSEnabled {
-		go StartRTPTLSListener(tlsPort, newConfig.Transport.TLSCert, newConfig.Transport.TLSKey)
-	} else {
-		StopRTPListener(tlsPort)
-	}
-
-	// Update WebRTC Settings
-	if newConfig.WebRTC.Enabled {
-		go StartWebRTCSession()
-	}
-
-	// Register Karl with OpenSIPS/Kamailio dynamically
-	go RegisterWithSIPProxy(newConfig.Integration.OpenSIPSIp, newConfig.Integration.OpenSIPSPort)
-	go RegisterWithSIPProxy(newConfig.Integration.KamailioIp, newConfig.Integration.KamailioPort)
-
-	// Apply new RTP alerting thresholds dynamically
+	updateTransportSettings(newConfig.Transport)
+	updateWebRTCSettings(newConfig.WebRTC)
+	updateRTPSettings(newConfig.RTPSettings)
+	updateIntegrationSettings(newConfig.Integration)
 	UpdateAlertThresholds(newConfig.AlertSettings)
 
-	log.Println("✅ Dynamic configuration applied successfully.")
+	log.Println("✅ Configuration applied successfully")
+	return nil
 }
 
-// GetPublicIP retrieves the system's public IP from an external service
+func updateTransportSettings(transport TransportConfig) {
+	if transport.UDPEnabled {
+		StartRTPUDPListener(strconv.Itoa(transport.UDPPort))
+	} else {
+		StopRTPListener(strconv.Itoa(transport.UDPPort))
+	}
+
+	if transport.TCPEnabled {
+		StartRTPTCPListener(strconv.Itoa(transport.TCPPort))
+	} else {
+		StopRTPListener(strconv.Itoa(transport.TCPPort))
+	}
+
+	if transport.TLSEnabled {
+		StartRTPTLSListener(
+			strconv.Itoa(transport.TLSPort),
+			transport.TLSCert,
+			transport.TLSKey,
+		)
+	} else {
+		StopRTPListener(strconv.Itoa(transport.TLSPort))
+	}
+}
+
+func updateWebRTCSettings(webrtc WebRTCConfig) {
+	if !webrtc.Enabled {
+		return
+	}
+
+	StartWebRTCSession()
+
+	if webrtc.RecordingEnabled {
+		os.MkdirAll(webrtc.RecordingPath, 0755)
+	}
+}
+
+func updateRTPSettings(settings RTPSettings) {
+	if settings.EnablePCAP {
+		InitPCAPCapture()
+	}
+
+	if settings.FECEnabled {
+		initializeFEC()
+	}
+
+	if settings.RTCPInterval > 0 {
+		updateRTCPInterval(settings.RTCPInterval)
+	}
+}
+
+func updateIntegrationSettings(integration IntegrationConfig) {
+	RegisterWithSIPProxy(integration.OpenSIPSIp, integration.OpenSIPSPort)
+	RegisterWithSIPProxy(integration.KamailioIp, integration.KamailioPort)
+
+	if integration.FailoverEnabled && integration.BackupMediaIP != "" {
+		setupFailover(integration.MediaIP, integration.BackupMediaIP)
+	}
+}
+
+// GetPublicIP retrieves the system's public IP
 func GetPublicIP() (string, error) {
-	resp, err := http.Get("https://api64.ipify.org")
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+	}
+
+	resp, err := client.Get("https://api64.ipify.org")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to get public IP: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to read response: %w", err)
 	}
 
-	return string(body), nil
+	ip := string(body)
+	if net.ParseIP(ip) == nil {
+		return "", fmt.Errorf("invalid IP address received: %s", ip)
+	}
+
+	return ip, nil
 }
