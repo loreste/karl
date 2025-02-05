@@ -1,16 +1,27 @@
 package internal
 
 import (
+	"context"
+	"fmt"
 	"log"
+	"sync/atomic"
 
 	"github.com/pion/webrtc/v3"
 )
 
-var transcoder *RTPTranscoder
+var (
+	transcoder   *RTPTranscoder
+	statsMonitor *WebRTCStats
+	sessions     int32
+)
 
 // StartWebRTCSession initializes a new WebRTC PeerConnection
 func StartWebRTCSession() (*webrtc.PeerConnection, error) {
 	configMutex.RLock()
+	if !config.WebRTC.Enabled {
+		configMutex.RUnlock()
+		return nil, fmt.Errorf("WebRTC is disabled in configuration")
+	}
 	stunServers := config.WebRTC.StunServers
 	turnServers := config.WebRTC.TurnServers
 	configMutex.RUnlock()
@@ -35,8 +46,27 @@ func StartWebRTCSession() (*webrtc.PeerConnection, error) {
 	// Create a new WebRTC PeerConnection
 	peerConnection, err := webrtc.NewPeerConnection(webrtcConfig)
 	if err != nil {
+		atomic.AddInt32(&sessions, -1)
 		log.Printf("Failed to create WebRTC session: %v", err)
 		return nil, err
+	}
+
+	// Initialize stats monitoring
+	statsMonitor = NewWebRTCStats(peerConnection, DefaultStatsConfig())
+	statsMonitor.SetStatsCallback(func(stats *Stats) {
+		// Update metrics based on stats
+		if stats.PacketsLost > 0 {
+			IncrementDroppedPackets()
+		}
+		SetPacketLoss(float64(stats.PacketsLost))
+		SetJitter(stats.JitterMS)
+		SetBandwidthUsage(int(stats.BytesSent))
+	})
+
+	// Start stats monitoring
+	ctx := context.Background()
+	if err := statsMonitor.StartMonitoring(ctx); err != nil {
+		log.Printf("Failed to start stats monitoring: %v", err)
 	}
 
 	// Initialize transcoder with the peer connection
@@ -64,8 +94,6 @@ func StartWebRTCSession() (*webrtc.PeerConnection, error) {
 		}
 	})
 
-	log.Println("WebRTC session initialized successfully")
-
 	// Set up ICE handling
 	peerConnection.OnICECandidate(func(candidate *webrtc.ICECandidate) {
 		if candidate != nil {
@@ -77,22 +105,26 @@ func StartWebRTCSession() (*webrtc.PeerConnection, error) {
 	peerConnection.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 		log.Printf("WebRTC connection state changed to: %s", state.String())
 
-		// Handle connection state changes
 		switch state {
 		case webrtc.PeerConnectionStateDisconnected:
 			log.Println("WebRTC disconnected - cleaning up transcoder")
 			if transcoder != nil {
-				// Close the transcoder which will clean up all tracks
 				transcoder.Close()
 			}
+			atomic.AddInt32(&sessions, -1)
 		case webrtc.PeerConnectionStateFailed:
 			log.Println("WebRTC failed - cleaning up transcoder")
 			if transcoder != nil {
 				transcoder.Close()
 			}
+			atomic.AddInt32(&sessions, -1)
+		case webrtc.PeerConnectionStateConnected:
+			log.Println("WebRTC connected successfully")
+			atomic.AddInt32(&sessions, 1)
 		}
 	})
 
+	log.Println("WebRTC session initialized successfully")
 	return peerConnection, nil
 }
 
@@ -136,4 +168,25 @@ func GetTranscodedTrack(trackID string) (*webrtc.TrackLocalStaticRTP, bool) {
 		}
 	}
 	return nil, false
+}
+
+// CleanupWebRTCSession cleans up the WebRTC session and monitoring
+func CleanupWebRTCSession() {
+	if statsMonitor != nil {
+		statsMonitor.StopMonitoring()
+		statsMonitor = nil
+	}
+
+	if transcoder != nil {
+		transcoder.Close()
+		transcoder = nil
+	}
+
+	atomic.StoreInt32(&sessions, 0)
+	log.Println("WebRTC session cleaned up")
+}
+
+// GetActiveSessionCount returns the number of active WebRTC sessions
+func GetActiveSessionCount() int32 {
+	return atomic.LoadInt32(&sessions)
 }
