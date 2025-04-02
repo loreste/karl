@@ -135,12 +135,12 @@ func (t *RTPTranscoder) processTrack(pair *trackPair) {
 		// VAD processing if enabled
 		if t.vadEnabled {
 			// Convert RTP payload to PCM samples first
-			pcmSamples, err := decodePCMUToPCM(packet.Payload)
+			pcmSamples, err := DecodePCMUToPCM(packet.Payload)
 			if err != nil {
 				t.handleError(fmt.Errorf("VAD conversion error: %v", err))
 				continue
 			}
-			if !isVoiceActive(pcmSamples) {
+			if !IsVoiceActive(pcmSamples) {
 				continue
 			}
 		}
@@ -211,7 +211,7 @@ func (t *RTPTranscoder) processBufferedPackets(buffer *PacketBuffer, pair *track
 
 func (t *RTPTranscoder) transcodeAndSend(packet *rtp.Packet, pair *trackPair) {
 	// Transcode based on codec
-	transcodedPayload, err := transcodeAudio(packet.Payload, pair.inputTrack.Codec().MimeType, pair.codec)
+	transcodedPayload, err := TranscodeAudio(packet.Payload, pair.inputTrack.Codec().MimeType, pair.codec)
 	if err != nil {
 		t.handleError(fmt.Errorf("transcoding error: %v", err))
 		return

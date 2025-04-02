@@ -50,68 +50,108 @@ func NewSRTPTranscoder(srtpKey, srtpSalt []byte) (*SRTPTranscoder, error) {
 
 // TranscodeRTPToSRTP encrypts an RTP packet for SRTP transmission
 func (t *SRTPTranscoder) TranscodeRTPToSRTP(packet []byte) ([]byte, error) {
+	// Check for nil context
 	if t.Context == nil {
-		return nil, fmt.Errorf("❌ SRTP context is not initialized")
+		return nil, fmt.Errorf("SRTP context not initialized")
+	}
+
+	// Validate input packet
+	if len(packet) < 12 {
+		return nil, fmt.Errorf("RTP packet too short (min 12 bytes required): %d bytes", len(packet))
 	}
 
 	// Parse RTP packet
 	rtpPacket := &rtp.Packet{}
 	if err := rtpPacket.Unmarshal(packet); err != nil {
-		log.Printf("❌ Failed to unmarshal RTP packet: %v", err)
-		return nil, err
+		IncrementErrorMetric("rtp_unmarshal_error")
+		return nil, fmt.Errorf("failed to unmarshal RTP packet: %w", err)
 	}
 
-	// Buffer for encrypted SRTP payload
-	encryptedPayload := make([]byte, len(packet))
+	// Calculate buffer size based on SRTP overhead
+	// SRTP adds authentication tag (10 bytes default for AES_CM_128_HMAC_SHA1_80)
+	// We allocate extra space to be safe
+	srtpOverhead := 20
+	bufEncrypted := make([]byte, 0, len(packet)+srtpOverhead)
 
 	// Encrypt RTP → SRTP
-	encryptedPayload, err := t.Context.EncryptRTP(encryptedPayload[:0], packet, &rtpPacket.Header)
+	encryptedPayload, err := t.Context.EncryptRTP(bufEncrypted, packet, &rtpPacket.Header)
 	if err != nil {
-		log.Printf("❌ SRTP encryption error: %v", err)
-		return nil, err
+		IncrementErrorMetric("srtp_encryption_error")
+		return nil, fmt.Errorf("SRTP encryption error: %w", err)
 	}
 
-	log.Printf("✅ Transcoded RTP → SRTP (SSRC=%d, Seq=%d, TS=%d)",
-		rtpPacket.SSRC,
-		rtpPacket.SequenceNumber,
-		rtpPacket.Timestamp)
+	// Validate output
+	if len(encryptedPayload) < len(packet) {
+		IncrementErrorMetric("srtp_invalid_output")
+		return nil, fmt.Errorf("SRTP encryption produced invalid output: expected >%d bytes, got %d bytes", 
+			len(packet), len(encryptedPayload))
+	}
+
+	// Debug logging is useful but should be configurable in production
+	if LogLevel >= LogLevelDebug {
+		log.Printf("Transcoded RTP → SRTP (SSRC=%d, Seq=%d, TS=%d, Size: %d→%d)",
+			rtpPacket.SSRC,
+			rtpPacket.SequenceNumber,
+			rtpPacket.Timestamp,
+			len(packet),
+			len(encryptedPayload))
+	}
+
+	// Increment success metrics
+	IncrementCounter("srtp_packets_encrypted")
 
 	return encryptedPayload, nil
 }
 
 // TranscodeSRTPToRTP decrypts an SRTP packet for RTP transmission
 func (t *SRTPTranscoder) TranscodeSRTPToRTP(encryptedPayload []byte) (*rtp.Packet, error) {
+	// Check for nil context
 	if t.Context == nil {
-		return nil, fmt.Errorf("❌ SRTP context is not initialized")
+		return nil, fmt.Errorf("SRTP context not initialized")
+	}
+
+	// Validate input
+	if len(encryptedPayload) < 12 {
+		IncrementErrorMetric("srtp_packet_too_short")
+		return nil, fmt.Errorf("SRTP packet too short (min 12 bytes required): %d bytes", len(encryptedPayload))
 	}
 
 	// Buffer for decrypted RTP payload
-	decryptedPayload := make([]byte, len(encryptedPayload))
+	decryptedPayload := make([]byte, 0, len(encryptedPayload))
 
 	// Decrypt SRTP → RTP
-	_, err := t.Context.DecryptRTP(decryptedPayload[:0], encryptedPayload, nil)
+	decryptedPayload, err := t.Context.DecryptRTP(decryptedPayload, encryptedPayload, nil)
 	if err != nil {
-		log.Printf("❌ SRTP decryption error: %v", err)
-		return nil, err
+		IncrementErrorMetric("srtp_decryption_error")
+		return nil, fmt.Errorf("SRTP decryption error: %w", err)
 	}
 
 	// Parse the decrypted RTP packet
 	rtpPacket := &rtp.Packet{}
 	err = rtpPacket.Unmarshal(decryptedPayload)
 	if err != nil {
-		log.Printf("❌ Failed to parse RTP after SRTP decryption: %v", err)
-		return nil, err
+		IncrementErrorMetric("rtp_parse_error")
+		return nil, fmt.Errorf("failed to parse RTP after SRTP decryption: %w", err)
 	}
 
-	log.Printf("✅ Transcoded SRTP → RTP (SSRC=%d, Seq=%d, TS=%d)",
-		rtpPacket.SSRC,
-		rtpPacket.SequenceNumber,
-		rtpPacket.Timestamp)
+	// Debug logging is useful but should be configurable
+	if LogLevel >= LogLevelDebug {
+		log.Printf("Transcoded SRTP → RTP (SSRC=%d, Seq=%d, TS=%d, Size: %d→%d)",
+			rtpPacket.SSRC,
+			rtpPacket.SequenceNumber,
+			rtpPacket.Timestamp,
+			len(encryptedPayload),
+			len(decryptedPayload))
+	}
+
+	// Increment success metrics
+	IncrementCounter("srtp_packets_decrypted") 
 
 	return rtpPacket, nil
 }
 
 // GetContext returns the underlying SRTP context
+// This method is kept for backward compatibility
 func (t *SRTPTranscoder) GetContext() *srtp.Context {
 	return t.Context
 }

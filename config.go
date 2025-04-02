@@ -35,14 +35,14 @@ func (k *KarlServer) loadConfig() error {
 
 // startAPIServer initializes the HTTP API server
 func (k *KarlServer) startAPIServer() {
-	log.Println("🌐 Starting API server on :8080")
+	log.Println("🌐 Starting API server on :9091")
 
 	// Set up API routes
 	mux := internal.SetupRoutes()
 
 	// Start HTTP server
 	go func() {
-		if err := http.ListenAndServe(":8080", mux); err != nil {
+		if err := http.ListenAndServe(":9091", mux); err != nil {
 			log.Printf("❌ API server error: %v", err)
 		}
 	}()

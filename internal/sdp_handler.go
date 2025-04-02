@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+// Use the config and configMutex declared in config_loader.go
+
 // ModifySDP ensures the correct IP (Public or Private) is sent in SDP
 func ModifySDP(sdp string, remoteIP string) string {
 	configMutex.RLock()
@@ -110,8 +112,9 @@ func EnsureSDPCompatibility(sdp string, isWebRTC bool) string {
 	return strings.Join(lines, "\n")
 }
 
-// GetLocalIP detects the correct local IP address
-func GetLocalIP() (string, error) {
+// getLocalIPAddress detects the correct local IP address
+// Renamed to avoid conflict with GetLocalIP in config_loader.go
+func getLocalIPAddress() (string, error) {
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {
 		return "", err

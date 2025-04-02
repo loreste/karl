@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"sync"
@@ -32,6 +33,8 @@ type KarlServer struct {
 	cancel         context.CancelFunc
 	mu             sync.RWMutex
 	isShuttingDown bool
+	resources      *internal.ResourceGroup // For tracking all resources
+	healthServer   *http.Server            // Health check server
 }
 
 // NewKarlServer creates and initializes a new KarlServer instance
@@ -45,6 +48,8 @@ func NewKarlServer() *KarlServer {
 
 // Start initializes and starts all server components
 func (k *KarlServer) Start() error {
+	startTime := time.Now()
+
 	// Load configuration
 	if err := k.loadConfig(); err != nil {
 		return fmt.Errorf("failed to load configuration: %w", err)
@@ -54,17 +59,66 @@ func (k *KarlServer) Start() error {
 	k.setupSignalHandler()
 
 	// Initialize metrics
-	k.startMetrics()
+	internal.InitMetrics()
+	err := internal.StartMetricsServer(":9091")
+	if err != nil {
+		log.Printf("❌ Failed to start metrics server: %v", err)
+	} else {
+		log.Println("✅ Metrics initialized and server started")
+	}
+
+	// Connect worker pool metrics to media handler
+	internal.WorkerMetricsGetter = internal.GetWorkerPoolMetrics
+
+	// Initialize resource tracking
+	k.resources = internal.NewResourceGroup()
+
+	// Register health checks
+	internal.RegisterDefaultHealthChecks()
+	internal.StartHealthChecker(30 * time.Second)
 
 	// Initialize all services
 	if err := k.initializeServices(); err != nil {
 		return fmt.Errorf("failed to initialize services: %w", err)
 	}
 
-	// Start SIP registration
-	k.startSIPRegistration()
+	// Initialize and start health API
+	startHealthAPI := func() {
+		mux := http.NewServeMux()
 
-	log.Println("✅ Karl RTP Engine started successfully")
+		// Register health check endpoints
+		mux.HandleFunc("/health", internal.SimpleHealthHandler())
+		mux.HandleFunc("/health/detail", internal.HealthHandler())
+
+		// Create health server with proper timeouts
+		k.healthServer = &http.Server{
+			Addr:         ":8086",
+			Handler:      mux,
+			ReadTimeout:  5 * time.Second,
+			WriteTimeout: 10 * time.Second,
+			IdleTimeout:  60 * time.Second,
+		}
+
+		// Start server in a goroutine
+		go func() {
+			log.Printf("🩺 Starting health check server on %s", k.healthServer.Addr)
+			if err := k.healthServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Printf("❌ Health check server error: %v", err)
+			}
+		}()
+
+		// Add to resource group for proper cleanup
+		k.resources.Add(&internal.HttpServerResource{Server: k.healthServer})
+	}
+	startHealthAPI()
+
+	// Note: loadConfig() already starts the API server and Unix socket listener
+	// SIP registration is initialized in initializeServices()
+
+	// Record startup time
+	startupDuration := time.Since(startTime)
+	log.Printf("✅ Karl RTP Engine started successfully in %s", startupDuration)
+
 	return nil
 }
 
@@ -107,6 +161,7 @@ func (k *KarlServer) Shutdown() {
 	// Stop WebRTC stats monitoring
 	if k.webrtcStats != nil {
 		k.webrtcStats.StopMonitoring()
+		k.webrtcStats = nil
 	}
 
 	// Clean up SRTP transcoder

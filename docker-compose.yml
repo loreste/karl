@@ -1,0 +1,84 @@
+version: '3'
+
+services:
+  karl:
+    build: .
+    container_name: karl-media-server
+    ports:
+      - "12000:12000/udp"  # RTP/RTCP
+      - "12001:12001/tcp"  # TCP
+      - "9091:9091/tcp"    # Metrics & API
+    volumes:
+      - ./config:/etc/karl
+      - ./logs:/var/log/karl
+    environment:
+      - KARL_LOG_LEVEL=3
+    restart: unless-stopped
+    depends_on:
+      - mysql
+      - redis
+    networks:
+      - karl-network
+
+  mysql:
+    image: mariadb:10.8
+    container_name: karl-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: rtpdb
+      MYSQL_USER: karl
+      MYSQL_PASSWORD: karlpassword
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./mysql_schema.sql:/docker-entrypoint-initdb.d/mysql_schema.sql
+    ports:
+      - "3306:3306"
+    restart: unless-stopped
+    networks:
+      - karl-network
+
+  redis:
+    image: redis:7.0-alpine
+    container_name: karl-redis
+    volumes:
+      - redis-data:/data
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    networks:
+      - karl-network
+
+  prometheus:
+    image: prom/prometheus:v2.36.0
+    container_name: karl-prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+    networks:
+      - karl-network
+
+  grafana:
+    image: grafana/grafana:9.0.0
+    container_name: karl-grafana
+    volumes:
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    networks:
+      - karl-network
+
+volumes:
+  mysql-data:
+  redis-data:
+  prometheus-data:
+  grafana-data:
+
+networks:
+  karl-network:
+    driver: bridge

@@ -1,0 +1,37 @@
+# Git files
+.git
+.gitignore
+
+# Build artifacts
+karl
+
+# Testing and development files
+test_client.go
+verify.go
+send_rtp.py
+*_test.go
+
+# Docker files (to prevent recursive copies)
+Dockerfile
+docker-compose.yml
+
+# Logs
+logs/
+*.log
+
+# Documentation
+*.md
+LICENSE
+
+# Runtime directories
+run/
+
+# Local development files
+*.local.json
+*.local.go
+
+# Editor directories and files
+.idea/
+.vscode/
+*.swp
+*.swo

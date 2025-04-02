@@ -153,3 +153,51 @@ type OutboundRTPStreamStats struct {
 	// RoundTripTime represents the current round trip time
 	RoundTripTime float64
 }
+
+// Status values for SIP sessions
+const (
+	SessionStatusNew      = "new"
+	SessionStatusActive   = "active"
+	SessionStatusInactive = "inactive"
+	SessionStatusClosed   = "closed"
+	SessionStatusFailed   = "failed"
+)
+
+// Media types
+const (
+	MediaTypeAudio = "audio"
+	MediaTypeVideo = "video"
+	MediaTypeData  = "data"
+)
+
+// Codec identifiers
+const (
+	CodecOpus  = "opus"
+	CodecG711u = "PCMU"
+	CodecG711a = "PCMA"
+	CodecVP8   = "VP8"
+	CodecH264  = "H264"
+)
+
+// RTP/SRTP related constants
+const (
+	RTPHeaderSize        = 12 // bytes
+	SRTPAuthTagSize      = 10 // bytes (for AES-CM-128-HMAC-SHA1-80)
+	MaxPacketSize        = 1500
+	DefaultJitterBuffer  = 50  // ms
+	DefaultPacketTimeout = 200 // ms
+)
+
+// Log levels
+const (
+	LogLevelError = 1
+	LogLevelWarn  = 2
+	LogLevelInfo  = 3
+	LogLevelDebug = 4
+	LogLevelTrace = 5
+)
+
+// Global settings
+var (
+	LogLevel = LogLevelInfo // Default log level
+)

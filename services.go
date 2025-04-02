@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"log"
-	"net/http"
 	"time"
 
 	"karl/internal"
@@ -35,7 +34,7 @@ func (k *KarlServer) initializeServices() error {
 	// Initialize API endpoints
 	k.initializeAPIServer()
 
-	// Start SIP registration
+	// Start SIP registration with cancelable context
 	k.startSIPRegistration()
 
 	log.Println("✅ All services initialized successfully")
@@ -95,12 +94,16 @@ func (k *KarlServer) initializeDatabases() error {
 		return fmt.Errorf("❌ Configuration not loaded")
 	}
 
-	// Initialize MySQL
-	db, err := internal.NewRTPDatabase(config.Database.MySQLDSN)
-	if err != nil {
-		return fmt.Errorf("❌ Failed to initialize MySQL: %w", err)
+	// Initialize MySQL if DSN is provided
+	if config.Database.MySQLDSN != "" {
+		db, err := internal.NewRTPDatabase(config.Database.MySQLDSN)
+		if err != nil {
+			return fmt.Errorf("❌ Failed to initialize MySQL: %w", err)
+		}
+		k.database = db
+	} else {
+		log.Println("⚠️ MySQL database connection disabled (no DSN provided)")
 	}
-	k.database = db
 
 	// Initialize Redis if enabled
 	if config.Database.RedisEnabled {
@@ -122,31 +125,14 @@ func (k *KarlServer) initializeDatabases() error {
 
 // startAPIServer initializes and starts the HTTP API server
 func (k *KarlServer) initializeAPIServer() {
-	// Set up API routes
-	mux := internal.SetupRoutes()
-
-	// Start HTTP server
-	go func() {
-		log.Println("🌐 Starting API server on :8080")
-		if err := http.ListenAndServe(":8080", mux); err != nil {
-			log.Printf("❌ API server error: %v", err)
-		}
-	}()
+	// Skip API server initialization here, it's already started in loadConfig
+	log.Println("✅ API server already initialized")
 }
 
 // startUnixSocketListener initializes and starts the Unix socket listener
 func (k *KarlServer) initializeUnixSocketListener() {
-	k.mu.RLock()
-	socketPath := k.config.Integration.RTPengineSocket
-	k.mu.RUnlock()
-
-	k.rtpSocket = internal.NewRTPengineSocketListener(socketPath)
-	if err := k.rtpSocket.Start(); err != nil {
-		log.Printf("❌ Failed to start Unix socket listener: %v", err)
-		return
-	}
-
-	log.Printf("✅ Unix socket listener started on %s", socketPath)
+	// Skip Unix socket listener initialization here, it's already started in loadConfig
+	log.Println("✅ Unix socket listener already initialized")
 }
 
 // startMetrics initializes and starts the metrics collection
@@ -171,19 +157,45 @@ func (k *KarlServer) startSIPRegistration() {
 	config := k.config
 	k.mu.RUnlock()
 
+	interval := 30 * time.Second
+	if config.Integration.KeepAliveInterval > 0 {
+		interval = time.Duration(config.Integration.KeepAliveInterval) * time.Second
+	}
+
+	// Use the new context-aware registration service
 	// Register with OpenSIPS
-	go internal.PeriodicallyRegisterWithSIPProxy(
-		config.Integration.OpenSIPSIp,
-		config.Integration.OpenSIPSPort,
-		30*time.Second,
-	)
+	if config.Integration.OpenSIPSIp != "" && config.Integration.OpenSIPSPort > 0 {
+		k.AddWorker() // Track this in the waitgroup
+		go func() {
+			defer k.WorkerDone()
+			internal.StartRegistrationService(
+				k.ctx,
+				config.Integration.OpenSIPSIp,
+				config.Integration.OpenSIPSPort,
+				interval,
+			)
+		}()
+		log.Printf("✅ OpenSIPS registration service started for %s:%d",
+			config.Integration.OpenSIPSIp, 
+			config.Integration.OpenSIPSPort)
+	}
 
 	// Register with Kamailio
-	go internal.PeriodicallyRegisterWithSIPProxy(
-		config.Integration.KamailioIp,
-		config.Integration.KamailioPort,
-		30*time.Second,
-	)
+	if config.Integration.KamailioIp != "" && config.Integration.KamailioPort > 0 {
+		k.AddWorker() // Track this in the waitgroup
+		go func() {
+			defer k.WorkerDone()
+			internal.StartRegistrationService(
+				k.ctx,
+				config.Integration.KamailioIp,
+				config.Integration.KamailioPort,
+				interval,
+			)
+		}()
+		log.Printf("✅ Kamailio registration service started for %s:%d",
+			config.Integration.KamailioIp,
+			config.Integration.KamailioPort)
+	}
 
-	log.Println("✅ SIP registration started")
+	log.Println("✅ SIP registration services started")
 }
