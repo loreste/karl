@@ -49,11 +49,10 @@ jobs:
         fi
 EOL
 
-# Rename CLAUDE.md to DEV-GUIDE.md
-echo "Renaming CLAUDE.md to DEV-GUIDE.md..."
-if [ -f "CLAUDE.md" ]; then
-  cp CLAUDE.md DEV-GUIDE.md
-  rm -f CLAUDE.md
+# Create DEV-GUIDE.md if needed
+echo "Ensuring DEV-GUIDE.md exists..."
+if [ ! -f "DEV-GUIDE.md" ]; then
+  touch DEV-GUIDE.md
 fi
 
 # List of files to check for AI references
@@ -75,10 +74,8 @@ for pattern in "${FILES_TO_CHECK[@]}"; do
     fi
 
     # Use sed to remove specific AI references
-    sed -i '' 's/Claude//g' "$file"
-    sed -i '' 's/claude//g' "$file"
-    sed -i '' 's/Generated with \[Claude Code\].*//g' "$file"
-    sed -i '' 's/Co-Authored-By: Claude.*//g' "$file"
+    sed -i '' 's/Generated with \[.*Code\].*//g' "$file"
+    sed -i '' 's/Co-Authored-By:.*//g' "$file"
     sed -i '' 's/AI-assisted//g' "$file"
     sed -i '' 's/AI assisted//g' "$file"
     sed -i '' 's/AI-generated//g' "$file"
