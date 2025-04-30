@@ -8,7 +8,7 @@ import (
 	"net"
 	"sync"
 	"time"
-	
+
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -43,10 +43,10 @@ var (
 	fecConfig      *FECConfig
 	rtcpConfig     *RTCPConfig
 	failoverConfig *FailoverConfig
-	
+
 	// Prometheus metrics
-	fecSentTotal   prometheus.Counter
-	rtcpSentTotal  prometheus.Counter
+	fecSentTotal  prometheus.Counter
+	rtcpSentTotal prometheus.Counter
 )
 
 // initializeFEC sets up Forward Error Correction
@@ -60,7 +60,7 @@ func initializeFEC() error {
 		redundancy:  0.3, // 30% redundancy
 		blockBuffer: make([][]byte, 0),
 	}
-	
+
 	// Initialize FEC metrics
 	fecSentTotal = prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace: "karl",
@@ -68,7 +68,7 @@ func initializeFEC() error {
 		Name:      "packets_sent_total",
 		Help:      "Total number of FEC packets sent",
 	})
-	
+
 	// Register metrics with Prometheus
 	prometheus.MustRegister(fecSentTotal)
 
@@ -120,18 +120,18 @@ func sendFECPacket(packet []byte) {
 	if packet == nil {
 		return
 	}
-	
+
 	// Get the configured FEC destination from config
 	configMutex.RLock()
 	fecDest := config.RTPSettings.FECDestination
 	fecPort := config.RTPSettings.FECPort
 	configMutex.RUnlock()
-	
+
 	if fecDest == "" || fecPort == 0 {
 		// FEC not configured, can't send
 		return
 	}
-	
+
 	// Create a UDP connection to the FEC destination
 	addr := fmt.Sprintf("%s:%d", fecDest, fecPort)
 	conn, err := net.Dial("udp", addr)
@@ -140,14 +140,14 @@ func sendFECPacket(packet []byte) {
 		return
 	}
 	defer conn.Close()
-	
+
 	// Send the packet
 	_, err = conn.Write(packet)
 	if err != nil {
 		log.Printf("❌ Failed to send FEC packet: %v", err)
 		return
 	}
-	
+
 	// Update metrics
 	if fecSentTotal != nil {
 		fecSentTotal.Inc()
@@ -162,7 +162,7 @@ func updateRTCPInterval(interval int) {
 		rtcpConfig = &RTCPConfig{
 			reportChan: make(chan struct{}),
 		}
-		
+
 		// Initialize RTCP metrics if not already done
 		if rtcpSentTotal == nil {
 			rtcpSentTotal = prometheus.NewCounter(prometheus.CounterOpts{
@@ -171,7 +171,7 @@ func updateRTCPInterval(interval int) {
 				Name:      "packets_sent_total",
 				Help:      "Total number of RTCP packets sent",
 			})
-			
+
 			// Register metrics with Prometheus
 			prometheus.MustRegister(rtcpSentTotal)
 		}
@@ -215,7 +215,7 @@ func sendRTCPReport() {
 
 	// Create RTCP packet
 	rtcpPacket := createRTCPPacket(stats)
-	
+
 	// Get destination from active sessions
 	destinations := getActiveRTCPDestinations()
 	if len(destinations) == 0 {
@@ -224,7 +224,7 @@ func sendRTCPReport() {
 			stats.packetLoss, stats.jitter)
 		return
 	}
-	
+
 	// Send to all active destinations
 	for _, dest := range destinations {
 		if err := sendRTCPPacket(rtcpPacket, dest); err != nil {
@@ -253,14 +253,14 @@ type RTCPStats struct {
 func createRTCPPacket(stats RTCPStats) []byte {
 	// Create a simple RTCP Sender Report (SR) packet
 	// RFC 3550 defines the format of RTCP packets
-	
+
 	// RTCP header (8 bytes)
 	// V=2, P=0, RC=0, PT=200 (SR), length=7 (32-bit words - 1)
 	header := []byte{0x80, 0xc8, 0x00, 0x07}
-	
+
 	// Sender SSRC (4 bytes) - Get from current session or use dummy value for now
 	ssrc := []byte{0x12, 0x34, 0x56, 0x78}
-	
+
 	// NTP timestamp (8 bytes)
 	// Use current time in NTP format (RFC 5905)
 	ntpTime := make([]byte, 8)
@@ -269,29 +269,29 @@ func createRTCPPacket(stats RTCPStats) []byte {
 	fraction := uint32(float64(now.Nanosecond()) * math.Pow(2, 32) / 1e9)
 	binary.BigEndian.PutUint32(ntpTime[:4], seconds)
 	binary.BigEndian.PutUint32(ntpTime[4:], fraction)
-	
+
 	// RTP timestamp (4 bytes) - Convert from NTP time
 	rtpTs := make([]byte, 4)
 	// 90kHz clock rate is common for video
 	rtpTimestamp := uint32(seconds * 90000)
 	binary.BigEndian.PutUint32(rtpTs, rtpTimestamp)
-	
+
 	// Packet and octet counts (8 bytes)
 	packetCount := make([]byte, 4)
 	octetCount := make([]byte, 4)
 	// Get from statistics
 	binary.BigEndian.PutUint32(packetCount, 1000)  // Example value
 	binary.BigEndian.PutUint32(octetCount, 160000) // Example value
-	
+
 	// Concatenate all parts
 	rtcpPacket := append(header, ssrc...)
 	rtcpPacket = append(rtcpPacket, ntpTime...)
 	rtcpPacket = append(rtcpPacket, rtpTs...)
 	rtcpPacket = append(rtcpPacket, packetCount...)
 	rtcpPacket = append(rtcpPacket, octetCount...)
-	
+
 	// Add Reception Report Block if needed (not included in this simple implementation)
-	
+
 	return rtcpPacket
 }
 
@@ -299,27 +299,27 @@ func createRTCPPacket(stats RTCPStats) []byte {
 func getActiveRTCPDestinations() []string {
 	// In a real implementation, get active RTP sessions with RTCP enabled
 	// For now, return configured endpoints or use a hardcoded demo value
-	
+
 	configMutex.RLock()
 	defer configMutex.RUnlock()
-	
+
 	destinations := make([]string, 0)
-	
+
 	// Check if we have active RTP sessions with SIP proxies
 	if config != nil {
 		if config.Integration.OpenSIPSIp != "" && config.Integration.OpenSIPSPort > 0 {
 			rtcpPort := config.Integration.OpenSIPSPort + 1 // RTCP is usually RTP port + 1
-			destinations = append(destinations, fmt.Sprintf("%s:%d", 
+			destinations = append(destinations, fmt.Sprintf("%s:%d",
 				config.Integration.OpenSIPSIp, rtcpPort))
 		}
-		
+
 		if config.Integration.KamailioIp != "" && config.Integration.KamailioPort > 0 {
 			rtcpPort := config.Integration.KamailioPort + 1
-			destinations = append(destinations, fmt.Sprintf("%s:%d", 
+			destinations = append(destinations, fmt.Sprintf("%s:%d",
 				config.Integration.KamailioIp, rtcpPort))
 		}
 	}
-	
+
 	return destinations
 }
 
@@ -331,13 +331,13 @@ func sendRTCPPacket(packet []byte, destination string) error {
 		return fmt.Errorf("failed to connect to RTCP destination: %w", err)
 	}
 	defer conn.Close()
-	
+
 	// Send the packet
 	_, err = conn.Write(packet)
 	if err != nil {
 		return fmt.Errorf("failed to send RTCP packet: %w", err)
 	}
-	
+
 	return nil
 }
 
@@ -345,26 +345,26 @@ func sendRTCPPacket(packet []byte, destination string) error {
 func collectRTCPStats() RTCPStats {
 	// Get actual statistics from the worker pool metrics and other sources
 	workerMetrics := WorkerMetricsGetter()
-	
+
 	// Calculate packet loss percentage
 	packetsProcessed := float64(workerMetrics["packets_processed"])
 	packetsDropped := float64(workerMetrics["packet_errors"])
-	
+
 	var packetLoss float64
 	if packetsProcessed > 0 {
 		packetLoss = (packetsDropped / packetsProcessed) * 100.0
 	} else {
 		packetLoss = 0.0
 	}
-	
+
 	// Get jitter from RTP sessions (simplified for now)
 	// In a real implementation, this would come from actual RTP session measurements
 	jitter := 0.0
-	
+
 	// Round-trip time
 	// This would come from RTCP Receiver Reports in a real implementation
 	rtt := 0.0
-	
+
 	return RTCPStats{
 		packetLoss: packetLoss,
 		jitter:     jitter,

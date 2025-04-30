@@ -7,7 +7,7 @@ import (
 
 func TestSRTPTranscoder(t *testing.T) {
 	// Create valid SRTP key and salt (using correct binary length)
-	srtpKey := make([]byte, 16) // 16-byte key
+	srtpKey := make([]byte, 16)  // 16-byte key
 	srtpSalt := make([]byte, 14) // 14-byte salt
 
 	// Create a new SRTP transcoder

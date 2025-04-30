@@ -83,7 +83,7 @@ func (t *SRTPTranscoder) TranscodeRTPToSRTP(packet []byte) ([]byte, error) {
 	// Validate output
 	if len(encryptedPayload) < len(packet) {
 		IncrementErrorMetric("srtp_invalid_output")
-		return nil, fmt.Errorf("SRTP encryption produced invalid output: expected >%d bytes, got %d bytes", 
+		return nil, fmt.Errorf("SRTP encryption produced invalid output: expected >%d bytes, got %d bytes",
 			len(packet), len(encryptedPayload))
 	}
 
@@ -145,7 +145,7 @@ func (t *SRTPTranscoder) TranscodeSRTPToRTP(encryptedPayload []byte) (*rtp.Packe
 	}
 
 	// Increment success metrics
-	IncrementCounter("srtp_packets_decrypted") 
+	IncrementCounter("srtp_packets_decrypted")
 
 	return rtpPacket, nil
 }

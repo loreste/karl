@@ -99,10 +99,10 @@ func PCMUToOpus(payload []byte) ([]byte, error) {
 
 // Opus codec parameters
 const (
-	opusSampleRate = 48000    // Opus works at 48kHz
-	opusChannels   = 2        // Stereo
-	opusFrameSize  = 960      // 20ms at 48kHz
-	opusBitrate    = 64000    // 64 kbps
+	opusSampleRate = 48000 // Opus works at 48kHz
+	opusChannels   = 2     // Stereo
+	opusFrameSize  = 960   // 20ms at 48kHz
+	opusBitrate    = 64000 // 64 kbps
 )
 
 // OpusEncoder represents a stateful Opus encoder
@@ -124,13 +124,13 @@ type OpusDecoder struct {
 
 // pureGoOpusEncoder implements a simplified Opus-like encoder in pure Go
 type pureGoOpusEncoder struct {
-	sampleRate  int
-	channels    int
-	bitrate     int
-	frameSize   int
-	complexity  int
-	packetLoss  int
-	frameCount  uint32
+	sampleRate int
+	channels   int
+	bitrate    int
+	frameSize  int
+	complexity int
+	packetLoss int
+	frameCount uint32
 }
 
 // pureGoOpusDecoder implements a simplified Opus-like decoder in pure Go
@@ -142,12 +142,12 @@ type pureGoOpusDecoder struct {
 // newOpusEncoder creates a new pure Go Opus-like encoder
 func newOpusEncoder(sampleRate, channels int) (*pureGoOpusEncoder, error) {
 	return &pureGoOpusEncoder{
-		sampleRate:  sampleRate,
-		channels:    channels,
-		bitrate:     64000, // 64 kbps default
-		complexity:  10,    // 0-10, higher is better quality
-		packetLoss:  5,     // 5% packet loss protection
-		frameCount:  0,
+		sampleRate: sampleRate,
+		channels:   channels,
+		bitrate:    64000, // 64 kbps default
+		complexity: 10,    // 0-10, higher is better quality
+		packetLoss: 5,     // 5% packet loss protection
+		frameCount: 0,
 	}, nil
 }
 
@@ -166,25 +166,25 @@ func (e *pureGoOpusEncoder) Encode(pcm []int16, frameSize int) ([]byte, error) {
 	bytesPerSecond := e.bitrate / 8
 	duration := float64(frameSize) / float64(e.sampleRate)
 	expectedSize := int(float64(bytesPerSecond) * duration)
-	
+
 	// Ensure reasonable bounds
 	if expectedSize < 10 {
 		expectedSize = 10
 	}
 	if expectedSize > len(pcm)/2 {
-		expectedSize = len(pcm)/2
+		expectedSize = len(pcm) / 2
 	}
-	
+
 	// Create output buffer
 	output := make([]byte, expectedSize)
-	
+
 	// Simple "encoding" - in a real implementation this would use actual Opus
 	// Here we do a very simplified version:
-	
+
 	// 1. Add a frame header (4 bytes)
 	binary.BigEndian.PutUint32(output[:4], e.frameCount)
 	e.frameCount++
-	
+
 	// 2. Calculate energy of the frame
 	var energy float64
 	for _, sample := range pcm {
@@ -192,12 +192,12 @@ func (e *pureGoOpusEncoder) Encode(pcm []int16, frameSize int) ([]byte, error) {
 		energy += normSample * normSample
 	}
 	energy = math.Sqrt(energy / float64(len(pcm)))
-	
+
 	// 3. Store frame energy (used for amplitude recovery during decoding)
 	if expectedSize > 4 {
 		output[4] = byte(energy * 255)
 	}
-	
+
 	// 4. Store some frequency information (very simplified)
 	// Real Opus uses MDCT and other transforms
 	lowEnergy, highEnergy := 0.0, 0.0
@@ -209,11 +209,11 @@ func (e *pureGoOpusEncoder) Encode(pcm []int16, frameSize int) ([]byte, error) {
 			highEnergy += normSample * normSample
 		}
 	}
-	
+
 	if expectedSize > 5 {
 		output[5] = byte((lowEnergy / highEnergy) * 128)
 	}
-	
+
 	// 5. Add some compressed "data" based on input
 	// In a real codec this would be spectral coefficients, etc.
 	for i := 6; i < expectedSize; i++ {
@@ -223,7 +223,7 @@ func (e *pureGoOpusEncoder) Encode(pcm []int16, frameSize int) ([]byte, error) {
 			output[i] = byte((int(pcm[sampleIdx]) + 32768) / 256)
 		}
 	}
-	
+
 	return output, nil
 }
 
@@ -232,30 +232,30 @@ func (d *pureGoOpusDecoder) Decode(encoded []byte, pcm []int16) (int, error) {
 	if len(encoded) < 6 {
 		return 0, fmt.Errorf("encoded data too short")
 	}
-	
+
 	// Extract frame header
 	frameCount := binary.BigEndian.Uint32(encoded[:4])
-	
+
 	// Extract energy
 	energy := float64(encoded[4]) / 255.0
-	
+
 	// Extract frequency balance
 	freqBalance := float64(encoded[5]) / 128.0
-	
+
 	// Calculate frame size (samples per channel)
 	// For simplicity, we'll say one byte encodes multiple samples
 	samplesPerChannel := len(pcm) / d.channels
-	
+
 	// Generate output PCM using simple synthesis
 	// In a real codec, this would involve inverse transforms
 	for i := 0; i < samplesPerChannel; i++ {
 		// Base carrier signal (very simplified)
-		carrier := math.Sin(2.0*math.Pi*float64(i)/float64(samplesPerChannel) * 
+		carrier := math.Sin(2.0 * math.Pi * float64(i) / float64(samplesPerChannel) *
 			(1.0 + 0.2*math.Sin(float64(frameCount)/20.0)))
-		
+
 		// Amplitude modulation based on energy
 		amplitude := energy * 32767.0
-		
+
 		// Apply frequency balance (very simplified)
 		// In a real codec, this would involve multiple frequency bands
 		if i%2 == 0 {
@@ -263,25 +263,25 @@ func (d *pureGoOpusDecoder) Decode(encoded []byte, pcm []int16) (int, error) {
 		} else {
 			amplitude *= (2.0 - freqBalance)
 		}
-		
+
 		// Hard-coded modulations to make output more realistic
 		// Decrease energy over time (basic envelope)
 		fadeOut := 1.0 - float64(i)/float64(samplesPerChannel)
-		
+
 		// Generate the sample
 		sample := int16(amplitude * carrier * fadeOut)
-		
+
 		// For each channel
 		for ch := 0; ch < d.channels; ch++ {
 			if i*d.channels+ch < len(pcm) {
 				// Add slight phase difference for stereo
 				chPhase := float64(ch) * 0.1
-				pcm[i*d.channels+ch] = int16(float64(sample) * 
+				pcm[i*d.channels+ch] = int16(float64(sample) *
 					(1.0 + chPhase*math.Sin(float64(i)/10.0)))
 			}
 		}
 	}
-	
+
 	return samplesPerChannel, nil
 }
 
@@ -323,10 +323,10 @@ func DecodeToPCM(payload []byte) ([]int16, error) {
 	if len(payload) < 2 {
 		return nil, fmt.Errorf("payload too short for Opus decoding")
 	}
-	
+
 	// Get the decoder
 	decoder := GetOpusDecoder()
-	
+
 	// Initialize Opus decoder if not already initialized
 	if decoder.instance == nil {
 		var err error
@@ -335,14 +335,14 @@ func DecodeToPCM(payload []byte) ([]int16, error) {
 			return nil, fmt.Errorf("failed to initialize Opus decoder: %w", err)
 		}
 	}
-	
+
 	// Actual decoding using the Opus library
 	pcm := make([]int16, decoder.frameSize*decoder.channels)
 	samplesDecoded, err := decoder.instance.Decode(payload, pcm)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode Opus data: %w", err)
 	}
-	
+
 	// Return only the valid decoded samples
 	return pcm[:samplesDecoded*decoder.channels], nil
 }
@@ -354,10 +354,10 @@ func EncodeToOpus(pcm []int16) ([]byte, error) {
 	if len(pcm) == 0 {
 		return nil, fmt.Errorf("empty PCM data for Opus encoding")
 	}
-	
+
 	// Get the encoder
 	encoder := GetOpusEncoder()
-	
+
 	// Initialize Opus encoder if not already initialized
 	if encoder.instance == nil {
 		var err error
@@ -366,33 +366,33 @@ func EncodeToOpus(pcm []int16) ([]byte, error) {
 			return nil, fmt.Errorf("failed to initialize Opus encoder: %w", err)
 		}
 	}
-	
+
 	// Calculate frame count and ensure we have enough samples
 	frameCount := len(pcm) / (encoder.channels * encoder.frameSize)
 	if frameCount == 0 {
-		return nil, fmt.Errorf("not enough PCM samples for encoding, need at least %d", 
+		return nil, fmt.Errorf("not enough PCM samples for encoding, need at least %d",
 			encoder.channels*encoder.frameSize)
 	}
-	
+
 	// For a single frame, encode directly
 	if frameCount == 1 {
 		return encoder.instance.Encode(pcm, encoder.frameSize)
 	}
-	
+
 	// For multiple frames, encode each frame separately and concatenate
 	var allEncoded []byte
 	for i := 0; i < frameCount; i++ {
 		frameStart := i * encoder.channels * encoder.frameSize
-		frameEnd := frameStart + encoder.channels * encoder.frameSize
-		
+		frameEnd := frameStart + encoder.channels*encoder.frameSize
+
 		frameEncoded, err := encoder.instance.Encode(pcm[frameStart:frameEnd], encoder.frameSize)
 		if err != nil {
 			return nil, fmt.Errorf("failed to encode frame %d: %w", i, err)
 		}
-		
+
 		allEncoded = append(allEncoded, frameEncoded...)
 	}
-	
+
 	return allEncoded, nil
 }
 

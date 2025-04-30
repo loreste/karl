@@ -9,7 +9,7 @@ import (
 func TestCodecConverter(t *testing.T) {
 	// Test PCM to PCMU conversion
 	_ = []int16{0, 100, 1000, 16000, -100, -1000, -16000} // just for reference
-	
+
 	// Test PCMU to PCMA conversion
 	pcmuData := []byte{0xFF, 0xFE, 0xFD, 0xFC, 0xFB, 0xFA, 0xF9}
 	pcmaOutput, err := internal.PCMUToPCMA(pcmuData)
@@ -34,7 +34,7 @@ func TestCodecConverter(t *testing.T) {
 	pcmSilence := make([]int16, 100) // All zeros = silence
 	// Just verify it runs - actual detection depends on threshold settings
 	_ = internal.IsVoiceActive(pcmSilence)
-	
+
 	// Test with loud audio
 	pcmLoud := make([]int16, 100)
 	for i := range pcmLoud {
@@ -46,13 +46,13 @@ func TestCodecConverter(t *testing.T) {
 	// Test audio normalization with values that need normalization
 	pcmOverload := []int16{32767, 32766, -32768, -32767}
 	normalized := internal.NormalizeAudio(pcmOverload)
-	
+
 	// Since these values are already at max, they won't be normalized
 	// Just check that the function runs without error
 	if normalized == nil {
 		t.Errorf("Expected non-nil result from NormalizeAudio")
 	}
-	
+
 	// Maximum value in normalized audio should not exceed 32767
 	for _, sample := range normalized {
 		if sample > 32767 || sample < -32768 {

@@ -49,13 +49,13 @@ type RTPSettings struct {
 	Encryption          bool   `json:"encryption"`
 	EnablePCAP          bool   `json:"enable_pcap"`
 	DTMFEnabled         bool   `json:"dtmf_enabled"`
-	FECEnabled          bool   `json:"fec_enabled"`    // Forward Error Correction
-	FECDestination      string `json:"fec_destination"`// FEC packet destination IP
-	FECPort             int    `json:"fec_port"`       // FEC packet destination port
-	REDEnabled          bool   `json:"red_enabled"`    // Redundant Encoding
-	RTCPInterval        int    `json:"rtcp_interval"`  // RTCP report interval in seconds
-	VADEnabled          bool   `json:"vad_enabled"`    // Voice Activity Detection
-	PLIInterval         int    `json:"pli_interval"`   // Picture Loss Indication interval
+	FECEnabled          bool   `json:"fec_enabled"`     // Forward Error Correction
+	FECDestination      string `json:"fec_destination"` // FEC packet destination IP
+	FECPort             int    `json:"fec_port"`        // FEC packet destination port
+	REDEnabled          bool   `json:"red_enabled"`     // Redundant Encoding
+	RTCPInterval        int    `json:"rtcp_interval"`   // RTCP report interval in seconds
+	VADEnabled          bool   `json:"vad_enabled"`     // Voice Activity Detection
+	PLIInterval         int    `json:"pli_interval"`    // Picture Loss Indication interval
 }
 
 // TURNServer represents a TURN server configuration

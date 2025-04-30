@@ -21,23 +21,23 @@ type KarlError struct {
 // Error returns the error message
 func (e *KarlError) Error() string {
 	var sb strings.Builder
-	
+
 	sb.WriteString(fmt.Sprintf("[%s] %s in %s: ", e.Code, e.Op, e.Component))
-	
+
 	if e.Err != nil {
 		sb.WriteString(e.Err.Error())
 	} else {
 		sb.WriteString("unknown error")
 	}
-	
+
 	if e.Context != "" {
 		sb.WriteString(fmt.Sprintf(" (%s)", e.Context))
 	}
-	
+
 	if e.File != "" && e.Line > 0 {
 		sb.WriteString(fmt.Sprintf(" at %s:%d", e.File, e.Line))
 	}
-	
+
 	return sb.String()
 }
 
@@ -51,52 +51,52 @@ func (e *KarlError) Is(target error) bool {
 	if target == nil {
 		return e.Err == target
 	}
-	
+
 	var karlErr *KarlError
 	if errors.As(target, &karlErr) {
 		return e.Code == karlErr.Code
 	}
-	
+
 	return errors.Is(e.Err, target)
 }
 
 // ErrorCode constants for categorization
 const (
 	// Infrastructure errors
-	ErrCodeNetwork        = "NETWORK_ERROR"
-	ErrCodeIO             = "IO_ERROR"
-	ErrCodeConfiguration  = "CONFIG_ERROR"
-	ErrCodeDatabase       = "DB_ERROR"
-	
+	ErrCodeNetwork       = "NETWORK_ERROR"
+	ErrCodeIO            = "IO_ERROR"
+	ErrCodeConfiguration = "CONFIG_ERROR"
+	ErrCodeDatabase      = "DB_ERROR"
+
 	// Media processing errors
-	ErrCodeRTP            = "RTP_ERROR"
-	ErrCodeSRTP           = "SRTP_ERROR"
-	ErrCodeCodec          = "CODEC_ERROR"
-	ErrCodeTranscoding    = "TRANSCODING_ERROR"
-	
+	ErrCodeRTP         = "RTP_ERROR"
+	ErrCodeSRTP        = "SRTP_ERROR"
+	ErrCodeCodec       = "CODEC_ERROR"
+	ErrCodeTranscoding = "TRANSCODING_ERROR"
+
 	// Protocol errors
-	ErrCodeSIP            = "SIP_ERROR"
-	ErrCodeSDP            = "SDP_ERROR"
-	ErrCodeWebRTC         = "WEBRTC_ERROR"
-	ErrCodeDTLS           = "DTLS_ERROR"
-	
+	ErrCodeSIP    = "SIP_ERROR"
+	ErrCodeSDP    = "SDP_ERROR"
+	ErrCodeWebRTC = "WEBRTC_ERROR"
+	ErrCodeDTLS   = "DTLS_ERROR"
+
 	// Internal errors
-	ErrCodeInternal       = "INTERNAL_ERROR"
-	ErrCodeResourceLimit  = "RESOURCE_LIMIT"
-	ErrCodeTimeout        = "TIMEOUT"
+	ErrCodeInternal      = "INTERNAL_ERROR"
+	ErrCodeResourceLimit = "RESOURCE_LIMIT"
+	ErrCodeTimeout       = "TIMEOUT"
 )
 
 // NewError creates a new error with contextual information
 func NewError(err error, code string, component string, op string) *KarlError {
 	_, file, line, _ := runtime.Caller(1)
-	
+
 	// Extract just the filename from the full path
 	fileParts := strings.Split(file, "/")
 	shortFile := fileParts[len(fileParts)-1]
-	
+
 	// Increment the appropriate error metric
 	IncrementErrorMetric(code)
-	
+
 	return &KarlError{
 		Err:       err,
 		Code:      code,
@@ -135,9 +135,9 @@ func IsRTPError(err error) bool {
 func IsTemporary(err error) bool {
 	var karlErr *KarlError
 	if errors.As(err, &karlErr) {
-		return karlErr.Code == ErrCodeNetwork || 
-		       karlErr.Code == ErrCodeTimeout || 
-		       strings.Contains(karlErr.Error(), "temporary")
+		return karlErr.Code == ErrCodeNetwork ||
+			karlErr.Code == ErrCodeTimeout ||
+			strings.Contains(karlErr.Error(), "temporary")
 	}
 	return false
 }

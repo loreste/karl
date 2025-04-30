@@ -7,7 +7,7 @@ import (
 
 func TestRTPControl(t *testing.T) {
 	// Create valid SRTP key and salt (using correct binary length)
-	srtpKey := make([]byte, 16) // 16-byte key
+	srtpKey := make([]byte, 16)  // 16-byte key
 	srtpSalt := make([]byte, 14) // 14-byte salt
 
 	// Create a new RTP control
@@ -25,7 +25,7 @@ func TestRTPControl(t *testing.T) {
 
 	// Test removing a destination
 	rtpControl.RemoveDestination(testAddr)
-	
+
 	// Verify stats are initialized to zero
 	packetsReceived, packetsDropped, bytesReceived, bytesSent := rtpControl.GetStats()
 	if packetsReceived != 0 || packetsDropped != 0 || bytesReceived != 0 || bytesSent != 0 {

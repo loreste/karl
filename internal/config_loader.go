@@ -42,7 +42,7 @@ func LoadConfig(filePath string) (*Config, error) {
 		detectedIP, err := GetPublicIP()
 		if err != nil {
 			log.Println("⚠️ Failed to detect public IP:", err)
-			
+
 			// Fallback to local IP if public IP detection fails
 			localIP := GetLocalIP()
 			if localIP != "" {
@@ -142,19 +142,19 @@ func ApplyNewConfig(newConfig Config) error {
 	if err := updateTransportSettings(newConfig.Transport); err != nil {
 		return fmt.Errorf("failed to update transport settings: %w", err)
 	}
-	
+
 	if err := updateWebRTCSettings(newConfig.WebRTC); err != nil {
 		return fmt.Errorf("failed to update WebRTC settings: %w", err)
 	}
-	
+
 	if err := updateRTPSettings(newConfig.RTPSettings); err != nil {
 		return fmt.Errorf("failed to update RTP settings: %w", err)
 	}
-	
+
 	if err := updateIntegrationSettings(newConfig.Integration); err != nil {
 		return fmt.Errorf("failed to update integration settings: %w", err)
 	}
-	
+
 	UpdateAlertThresholds(newConfig.AlertSettings)
 
 	log.Println("✅ Configuration applied successfully")
@@ -171,35 +171,35 @@ func ApplyNewConfig(newConfig Config) error {
 // In real implementation these would be imported from their respective packages
 // For testing purposes during development, we use stub declarations here
 func updateTransportSettings(transport TransportConfig) error {
-	log.Printf("Updating transport settings (UDP: %v, TCP: %v, TLS: %v)", 
+	log.Printf("Updating transport settings (UDP: %v, TCP: %v, TLS: %v)",
 		transport.UDPEnabled, transport.TCPEnabled, transport.TLSEnabled)
-	
+
 	// These function calls are now commented out since they are properly implemented elsewhere
 	// and we were getting duplicate declarations
 	/*
-	if transport.UDPEnabled {
-		StartRTPUDPListener(strconv.Itoa(transport.UDPPort))
-	} else {
-		StopRTPListener(strconv.Itoa(transport.UDPPort))
-	}
+		if transport.UDPEnabled {
+			StartRTPUDPListener(strconv.Itoa(transport.UDPPort))
+		} else {
+			StopRTPListener(strconv.Itoa(transport.UDPPort))
+		}
 
-	if transport.TCPEnabled {
-		StartRTPTCPListener(strconv.Itoa(transport.TCPPort))
-	} else {
-		StopRTPListener(strconv.Itoa(transport.TCPPort))
-	}
+		if transport.TCPEnabled {
+			StartRTPTCPListener(strconv.Itoa(transport.TCPPort))
+		} else {
+			StopRTPListener(strconv.Itoa(transport.TCPPort))
+		}
 
-	if transport.TLSEnabled {
-		StartRTPTLSListener(
-			strconv.Itoa(transport.TLSPort),
-			transport.TLSCert,
-			transport.TLSKey,
-		)
-	} else {
-		StopRTPListener(strconv.Itoa(transport.TLSPort))
-	}
+		if transport.TLSEnabled {
+			StartRTPTLSListener(
+				strconv.Itoa(transport.TLSPort),
+				transport.TLSCert,
+				transport.TLSKey,
+			)
+		} else {
+			StopRTPListener(strconv.Itoa(transport.TLSPort))
+		}
 	*/
-	
+
 	return nil
 }
 
@@ -218,31 +218,31 @@ func updateWebRTCSettings(webrtc WebRTCConfig) error {
 			return fmt.Errorf("failed to create recording directory: %w", err)
 		}
 	}
-	
+
 	return nil
 }
 
 func updateRTPSettings(settings RTPSettings) error {
 	// These function calls are now commented out since they are properly implemented elsewhere
 	// and we were getting duplicate declarations
-	
+
 	log.Printf("Updating RTP settings (PCAP: %v, FEC: %v, RTCP: %d)",
 		settings.EnablePCAP, settings.FECEnabled, settings.RTCPInterval)
-	
+
 	/*
-	if settings.EnablePCAP {
-		InitPCAPCapture()
-	}
+		if settings.EnablePCAP {
+			InitPCAPCapture()
+		}
 
-	if settings.FECEnabled {
-		initializeFEC()
-	}
+		if settings.FECEnabled {
+			initializeFEC()
+		}
 
-	if settings.RTCPInterval > 0 {
-		updateRTCPInterval(settings.RTCPInterval)
-	}
+		if settings.RTCPInterval > 0 {
+			updateRTCPInterval(settings.RTCPInterval)
+		}
 	*/
-	
+
 	return nil
 }
 
@@ -251,18 +251,18 @@ func updateIntegrationSettings(integration IntegrationConfig) error {
 	if err := RegisterWithSIPProxy(integration.OpenSIPSIp, integration.OpenSIPSPort); err != nil {
 		log.Printf("Failed to register with OpenSIPS: %v", err)
 	}
-	
+
 	if err := RegisterWithSIPProxy(integration.KamailioIp, integration.KamailioPort); err != nil {
 		log.Printf("Failed to register with Kamailio: %v", err)
 	}
 
 	// setupFailover is commented out since it's implemented elsewhere
 	if integration.FailoverEnabled && integration.BackupMediaIP != "" {
-		log.Printf("Setting up failover from %s to %s", 
+		log.Printf("Setting up failover from %s to %s",
 			integration.MediaIP, integration.BackupMediaIP)
 		// setupFailover(integration.MediaIP, integration.BackupMediaIP)
 	}
-	
+
 	return nil
 }
 
@@ -297,7 +297,7 @@ func GetLocalIP() string {
 	if err != nil {
 		return ""
 	}
-	
+
 	for _, address := range addrs {
 		// Check the address type and if it's not a loopback
 		if ipnet, ok := address.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
@@ -306,6 +306,6 @@ func GetLocalIP() string {
 			}
 		}
 	}
-	
+
 	return ""
 }

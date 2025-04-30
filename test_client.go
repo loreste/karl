@@ -40,12 +40,12 @@ func main() {
 		if err != nil {
 			log.Printf("Failed to send packet: %v", err)
 		}
-		
+
 		// Increment sequence number for each packet
 		testPacket[2]++
 		// Increment timestamp
 		testPacket[7]++
-		
+
 		time.Sleep(100 * time.Millisecond)
 	}
 

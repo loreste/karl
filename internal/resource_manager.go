@@ -34,10 +34,10 @@ func (rg *ResourceGroup) Add(r Resource) {
 	if r == nil {
 		return
 	}
-	
+
 	rg.mutex.Lock()
 	defer rg.mutex.Unlock()
-	
+
 	if rg.closed {
 		// Group is already closed, close the resource immediately
 		if err := r.Close(); err != nil {
@@ -45,7 +45,7 @@ func (rg *ResourceGroup) Add(r Resource) {
 		}
 		return
 	}
-	
+
 	rg.resources = append(rg.resources, r)
 }
 
@@ -53,13 +53,13 @@ func (rg *ResourceGroup) Add(r Resource) {
 func (rg *ResourceGroup) Close() error {
 	rg.mutex.Lock()
 	defer rg.mutex.Unlock()
-	
+
 	if rg.closed {
 		return nil
 	}
-	
+
 	rg.closed = true
-	
+
 	var lastErr error
 	for _, r := range rg.resources {
 		if err := r.Close(); err != nil {
@@ -67,10 +67,10 @@ func (rg *ResourceGroup) Close() error {
 			lastErr = err
 		}
 	}
-	
+
 	// Clear resources after closing them
 	rg.resources = nil
-	
+
 	return lastErr
 }
 
@@ -91,11 +91,11 @@ func NewResourceWithTimeout(r Resource, timeout time.Duration) *ResourceWithTime
 // Close closes the resource with a timeout
 func (rwt *ResourceWithTimeout) Close() error {
 	ch := make(chan error, 1)
-	
+
 	go func() {
 		ch <- rwt.Resource.Close()
 	}()
-	
+
 	select {
 	case err := <-ch:
 		return err
@@ -116,7 +116,7 @@ func CloseWithLogging(r io.Closer, name string) {
 	if r == nil {
 		return
 	}
-	
+
 	if err := r.Close(); err != nil {
 		log.Printf("Error closing %s: %v", name, err)
 		IncrementErrorMetric("resource_close_error")
@@ -128,16 +128,16 @@ func CloseWithTimeout(r io.Closer, timeout time.Duration) error {
 	if r == nil {
 		return nil
 	}
-	
+
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	
+
 	ch := make(chan error, 1)
-	
+
 	go func() {
 		ch <- r.Close()
 	}()
-	
+
 	select {
 	case err := <-ch:
 		return err
@@ -156,11 +156,11 @@ func (r *HttpServerResource) Close() error {
 	if r.Server == nil {
 		return nil
 	}
-	
+
 	// Create context with timeout for shutdown
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	
+
 	log.Printf("Shutting down HTTP server on %s", r.Server.Addr)
 	return r.Server.Shutdown(ctx)
 }

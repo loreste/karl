@@ -16,21 +16,21 @@ import (
 var (
 	// Mutex for thread-safe metrics operations
 	metricsMutex sync.RWMutex
-	
+
 	// Server reference for proper shutdown
 	metricsServer *http.Server
-	
+
 	// System metrics
 	goroutinesGauge = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "karl_goroutines",
 		Help: "Current number of goroutines",
 	})
-	
+
 	memoryUsage = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "karl_memory_bytes",
 		Help: "Current memory usage in bytes",
 	})
-	
+
 	// Latency histograms
 	operationDurations = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -100,12 +100,12 @@ func InitMetrics() {
 	prometheus.MustRegister(rtpBandwidthUsage)
 	prometheus.MustRegister(rtpErrors)
 	prometheus.MustRegister(rtpSuccesses)
-	
+
 	// Register system metrics
 	prometheus.MustRegister(goroutinesGauge)
 	prometheus.MustRegister(memoryUsage)
 	prometheus.MustRegister(operationDurations)
-	
+
 	// Start system metrics collection
 	go collectSystemMetrics()
 
@@ -118,17 +118,17 @@ func StartMetricsServer(address string) error {
 	if address == "" {
 		address = ":9091" // Default metrics port
 	}
-	
+
 	// Create a dedicated mux for metrics
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
-	
+
 	// Add a health endpoint
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("OK"))
 	})
-	
+
 	// Create server with proper timeouts
 	server := &http.Server{
 		Addr:         address,
@@ -137,7 +137,7 @@ func StartMetricsServer(address string) error {
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  120 * time.Second,
 	}
-	
+
 	// Start server in a goroutine
 	go func() {
 		log.Printf("🔍 Starting metrics server on %s", address)
@@ -145,7 +145,7 @@ func StartMetricsServer(address string) error {
 			log.Printf("❌ Metrics server error: %v", err)
 		}
 	}()
-	
+
 	return nil
 }
 
@@ -177,7 +177,7 @@ func SetBandwidthUsage(bandwidth int) {
 // IncrementErrorMetric increments an error counter for specific error types
 func IncrementErrorMetric(errorType string) {
 	rtpErrors.WithLabelValues(errorType).Inc()
-	
+
 	// Log the error based on the log level
 	if LogLevel >= LogLevelError {
 		log.Printf("ERROR [%s]: Recorded error metric", errorType)
@@ -187,7 +187,7 @@ func IncrementErrorMetric(errorType string) {
 // IncrementCounter increments a success counter for specific operation types
 func IncrementCounter(operationType string) {
 	rtpSuccesses.WithLabelValues(operationType).Inc()
-	
+
 	// Log for debug level
 	if LogLevel >= LogLevelDebug {
 		log.Printf("DEBUG [%s]: Recorded success metric", operationType)
@@ -198,11 +198,11 @@ func IncrementCounter(operationType string) {
 func StopMetricsServer() error {
 	metricsMutex.Lock()
 	defer metricsMutex.Unlock()
-	
+
 	if metricsServer != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		
+
 		log.Println("🛑 Shutting down metrics server...")
 		return metricsServer.Shutdown(ctx)
 	}
@@ -219,13 +219,13 @@ func MeasureOperation(operation string, start time.Time) {
 func collectSystemMetrics() {
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
-	
+
 	for {
 		select {
 		case <-ticker.C:
 			// Update goroutine count
 			goroutinesGauge.Set(float64(runtime.NumGoroutine()))
-			
+
 			// Update memory usage
 			var memStats runtime.MemStats
 			runtime.ReadMemStats(&memStats)

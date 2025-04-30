@@ -1,6 +1,6 @@
 # Karl Media Server
 
-Karl is a high-performance, production-ready media server designed for handling WebRTC, SIP, RTP, and SRTP communications. It integrates with OpenSIPS, Kamailio, and RTPengine, supporting real-time media routing, transcoding, and security features like DTLS-SRTP.
+Karl is a high-performance, production-ready media server designed for handling WebRTC, SIP, RTP, and SRTP communications. It integrates with OpenSIPS, Kamailio and others, supporting real-time media routing, transcoding, and security features like DTLS-SRTP.
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/karlmediaserver/karl)](https://goreportcard.com/report/github.com/karlmediaserver/karl)
 [![Go Reference](https://pkg.go.dev/badge/github.com/karlmediaserver/karl.svg)](https://pkg.go.dev/github.com/karlmediaserver/karl)

@@ -171,26 +171,26 @@ func sendRTPPackets(done chan struct{}) {
 // checkMetricsEndpoint verifies the metrics endpoint is working
 func checkMetricsEndpoint() error {
 	url := fmt.Sprintf("http://localhost:%d/metrics", metricsPort)
-	
+
 	resp, err := http.Get(url)
 	if err != nil {
 		return fmt.Errorf("failed to connect to metrics endpoint: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
-	
+
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("failed to read response body: %w", err)
 	}
-	
+
 	if !bytes.Contains(body, []byte("karl_rtp_packets_total")) {
 		return fmt.Errorf("metrics endpoint is not returning expected metrics")
 	}
-	
+
 	fmt.Println("Metrics endpoint is working correctly")
 	return nil
 }
@@ -198,31 +198,31 @@ func checkMetricsEndpoint() error {
 func RunE2ETest() {
 	fmt.Println("Karl Media Server - End-to-End Test")
 	fmt.Println("===================================")
-	
+
 	// Handle interrupts
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-	
+
 	// Start Karl server
 	cmd, err := startKarlServer()
 	if err != nil {
 		log.Fatalf("Failed to start Karl server: %v", err)
 	}
-	
+
 	// Ensure server is stopped on exit
 	defer stopKarlServer(cmd)
-	
+
 	// Check metrics endpoint
 	if err := checkMetricsEndpoint(); err != nil {
 		log.Fatalf("Metrics check failed: %v", err)
 	}
-	
+
 	// Channel to signal packet sender to stop
 	done := make(chan struct{})
-	
+
 	// Start sending packets
 	go sendRTPPackets(done)
-	
+
 	// Run the test for the specified duration or until interrupted
 	select {
 	case <-time.After(testDuration):
@@ -230,18 +230,18 @@ func RunE2ETest() {
 	case <-sigChan:
 		fmt.Println("Test interrupted")
 	}
-	
+
 	// Signal packet sender to stop
 	close(done)
-	
+
 	// Wait a moment for final packets to be processed
 	time.Sleep(1 * time.Second)
-	
+
 	// Final metrics check
 	fmt.Println("Checking final metrics...")
 	if err := checkMetricsEndpoint(); err != nil {
 		log.Printf("Final metrics check failed: %v", err)
 	}
-	
+
 	fmt.Println("Test completed successfully")
 }

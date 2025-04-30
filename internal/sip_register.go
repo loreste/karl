@@ -56,7 +56,7 @@ func RegisterWithSIPProxy(proxyIP string, proxyPort int) error {
 		registrationStatusLock.Lock()
 		registrationStatus[proxyAddr] = false
 		registrationStatusLock.Unlock()
-		
+
 		return fmt.Errorf("failed to connect to SIP proxy %s: %w", proxyAddr, err)
 	}
 	defer conn.Close()
@@ -79,7 +79,7 @@ func RegisterWithSIPProxy(proxyIP string, proxyPort int) error {
 		registrationStatusLock.Lock()
 		registrationStatus[proxyAddr] = false
 		registrationStatusLock.Unlock()
-		
+
 		return fmt.Errorf("failed to send registration to SIP proxy: %w", err)
 	}
 
@@ -91,7 +91,7 @@ func RegisterWithSIPProxy(proxyIP string, proxyPort int) error {
 		registrationStatusLock.Lock()
 		registrationStatus[proxyAddr] = false
 		registrationStatusLock.Unlock()
-		
+
 		return fmt.Errorf("failed to receive response from SIP proxy: %w", err)
 	}
 
@@ -183,7 +183,7 @@ func GetLocalIPAddress() string {
 	if err != nil {
 		return ""
 	}
-	
+
 	for _, address := range addrs {
 		// Check the address type and if it's not a loopback
 		if ipnet, ok := address.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
@@ -192,6 +192,6 @@ func GetLocalIPAddress() string {
 			}
 		}
 	}
-	
+
 	return ""
 }

@@ -12,21 +12,21 @@ import (
 
 // Global variables for PCAP file handling
 var (
-	pcapFile     *os.File
-	pcapWriter   *pcapgo.Writer
-	pcapEnabled  bool
+	pcapFile    *os.File
+	pcapWriter  *pcapgo.Writer
+	pcapEnabled bool
 )
 
 // InitPCAPCapture initializes packet capture and creates a PCAP file
 func InitPCAPCapture() {
 	var err error
-	
+
 	// Ensure logs directory exists
 	if err := os.MkdirAll("logs", 0755); err != nil {
 		log.Printf("Failed to create logs directory: %v", err)
 		return
 	}
-	
+
 	pcapFile, err = os.Create("logs/karl_capture.pcap")
 	if err != nil {
 		log.Printf("Failed to create PCAP file: %v", err)

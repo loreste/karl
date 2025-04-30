@@ -176,7 +176,7 @@ func (k *KarlServer) startSIPRegistration() {
 			)
 		}()
 		log.Printf("✅ OpenSIPS registration service started for %s:%d",
-			config.Integration.OpenSIPSIp, 
+			config.Integration.OpenSIPSIp,
 			config.Integration.OpenSIPSPort)
 	}
 
