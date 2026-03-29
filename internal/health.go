@@ -84,7 +84,7 @@ func RunHealthChecks() {
 	defer healthMutex.Unlock()
 
 	// Update uptime
-	systemHealth.Uptime = fmt.Sprintf("%s", time.Since(startTime).Round(time.Second))
+	systemHealth.Uptime = time.Since(startTime).Round(time.Second).String()
 
 	// Track overall status
 	overallStatus := StatusUp
@@ -111,11 +111,8 @@ func StartHealthChecker(interval time.Duration) {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 
-		for {
-			select {
-			case <-ticker.C:
-				RunHealthChecks()
-			}
+		for range ticker.C {
+			RunHealthChecks()
 		}
 	}()
 
@@ -145,7 +142,7 @@ func HealthHandler() http.HandlerFunc {
 		}
 
 		// Return full health report
-		json.NewEncoder(w).Encode(systemHealth)
+		_ = json.NewEncoder(w).Encode(systemHealth)
 	}
 }
 
@@ -160,13 +157,13 @@ func SimpleHealthHandler() http.HandlerFunc {
 
 		if status == StatusDown {
 			w.WriteHeader(http.StatusServiceUnavailable)
-			w.Write([]byte(`{"status":"DOWN"}`))
+			_, _ = w.Write([]byte(`{"status":"DOWN"}`))
 		} else if status == StatusDegraded {
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"status":"DEGRADED"}`))
+			_, _ = w.Write([]byte(`{"status":"DEGRADED"}`))
 		} else {
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"status":"UP"}`))
+			_, _ = w.Write([]byte(`{"status":"UP"}`))
 		}
 	}
 }
@@ -235,6 +232,10 @@ func CheckSIPRegistration() ComponentHealth {
 
 	// Get config to check which proxies should be registered
 	configMutex.RLock()
+	if config == nil {
+		configMutex.RUnlock()
+		return CreateComponentHealth(StatusDown, "Config not loaded")
+	}
 	opensipsAddr := fmt.Sprintf("%s:%d", config.Integration.OpenSIPSIp, config.Integration.OpenSIPSPort)
 	kamailioAddr := fmt.Sprintf("%s:%d", config.Integration.KamailioIp, config.Integration.KamailioPort)
 	configMutex.RUnlock()

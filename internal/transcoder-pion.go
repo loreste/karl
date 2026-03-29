@@ -50,7 +50,7 @@ type trackPair struct {
 	outputTrack *webrtc.TrackLocalStaticRTP
 	ssrc        webrtc.SSRC
 	sequenceNum uint16
-	timestamp   uint32
+
 	payloadType uint8
 	codec       string
 }

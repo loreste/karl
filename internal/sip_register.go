@@ -46,7 +46,7 @@ func IsRegisteredWithSIPProxy(proxyAddr string) bool {
 
 // RegisterWithSIPProxy registers Karl as an RTP media relay with OpenSIPS/Kamailio
 func RegisterWithSIPProxy(proxyIP string, proxyPort int) error {
-	proxyAddr := fmt.Sprintf("%s:%d", proxyIP, proxyPort)
+	proxyAddr := net.JoinHostPort(proxyIP, fmt.Sprint(proxyPort))
 
 	// Create a UDP connection to the SIP proxy with timeout
 	dialer := net.Dialer{Timeout: 5 * time.Second}
@@ -64,9 +64,9 @@ func RegisterWithSIPProxy(proxyIP string, proxyPort int) error {
 	// Set read/write timeouts
 	deadline := time.Now().Add(5 * time.Second)
 	if tcpConn, ok := conn.(*net.TCPConn); ok {
-		tcpConn.SetDeadline(deadline)
+		_ = tcpConn.SetDeadline(deadline)
 	} else if udpConn, ok := conn.(*net.UDPConn); ok {
-		udpConn.SetDeadline(deadline)
+		_ = udpConn.SetDeadline(deadline)
 	}
 
 	// Send a registration message with host information

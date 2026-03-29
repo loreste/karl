@@ -53,10 +53,5 @@ func TestCodecConverter(t *testing.T) {
 		t.Errorf("Expected non-nil result from NormalizeAudio")
 	}
 
-	// Maximum value in normalized audio should not exceed 32767
-	for _, sample := range normalized {
-		if sample > 32767 || sample < -32768 {
-			t.Errorf("Normalized sample out of range: %d", sample)
-		}
-	}
+
 }

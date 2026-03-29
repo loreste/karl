@@ -44,10 +44,10 @@ func UpdateConfigHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Apply the new configuration dynamically
-	ApplyNewConfig(newConfig)
+	_ = ApplyNewConfig(newConfig)
 
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"status": "Configuration updated successfully"}`))
+	_, _ = w.Write([]byte(`{"status": "Configuration updated successfully"}`))
 }
 
 // SaveConfig writes the updated configuration to `config.json`

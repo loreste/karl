@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"log"
-	"net/http"
 
 	"karl/internal"
 )
@@ -22,31 +21,17 @@ func (k *KarlServer) loadConfig() error {
 	k.mu.Unlock()
 
 	// Start config watcher
-	go internal.WatchConfig("config/config.json")
+	go func() { _ = internal.WatchConfig("config/config.json") }()
 
 	log.Println("✅ Configuration loaded successfully")
 
-	// Ensure API Server and Unix Socket Listener are started here
-	k.startAPIServer()
+	// Ensure Unix Socket Listener is started here
 	k.startUnixSocketListener()
 
 	return nil
 }
 
-// startAPIServer initializes the HTTP API server
-func (k *KarlServer) startAPIServer() {
-	log.Println("🌐 Starting API server on :9091")
 
-	// Set up API routes
-	mux := internal.SetupRoutes()
-
-	// Start HTTP server
-	go func() {
-		if err := http.ListenAndServe(":9091", mux); err != nil {
-			log.Printf("❌ API server error: %v", err)
-		}
-	}()
-}
 
 // startUnixSocketListener initializes the Unix socket listener
 func (k *KarlServer) startUnixSocketListener() {

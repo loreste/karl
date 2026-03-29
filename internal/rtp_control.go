@@ -88,7 +88,7 @@ func (r *RTPControl) packetHandlingLoop() {
 		packet := make([]byte, n)
 		copy(packet, buffer[:n])
 
-		go r.HandleRTPPacket(packet)
+		go func() { _ = r.HandleRTPPacket(packet) }()
 
 		if n > 0 {
 			log.Printf("📦 Received packet from %s, size: %d bytes", remoteAddr, n)

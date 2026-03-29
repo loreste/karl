@@ -92,7 +92,7 @@ func GetActiveAlerts(w http.ResponseWriter, r *http.Request) {
 	defer alertMutex.RUnlock()
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(alerts)
+	_ = json.NewEncoder(w).Encode(alerts)
 }
 
 // UpdateAlertThresholds updates alert thresholds dynamically

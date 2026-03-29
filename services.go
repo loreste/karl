@@ -135,21 +135,7 @@ func (k *KarlServer) initializeUnixSocketListener() {
 	log.Println("✅ Unix socket listener already initialized")
 }
 
-// startMetrics initializes and starts the metrics collection
-func (k *KarlServer) startMetrics() {
-	// Initialize Prometheus metrics
-	internal.InitMetrics()
 
-	// Initialize PCAP capture if enabled
-	k.mu.RLock()
-	if k.config.RTPSettings.EnablePCAP {
-		internal.InitPCAPCapture()
-		log.Println("✅ PCAP capture initialized")
-	}
-	k.mu.RUnlock()
-
-	log.Println("✅ Metrics collection started")
-}
 
 // startSIPRegistration starts periodic SIP proxy registration
 func (k *KarlServer) startSIPRegistration() {

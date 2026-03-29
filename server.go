@@ -60,7 +60,8 @@ func (k *KarlServer) Start() error {
 
 	// Initialize metrics
 	internal.InitMetrics()
-	err := internal.StartMetricsServer(":9091")
+	mux := internal.SetupRoutes()
+	err := internal.StartMetricsServer(":9091", mux)
 	if err != nil {
 		log.Printf("❌ Failed to start metrics server: %v", err)
 	} else {

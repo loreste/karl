@@ -195,7 +195,7 @@ func checkMetricsEndpoint() error {
 	return nil
 }
 
-func RunE2ETest() {
+func main() {
 	fmt.Println("Karl Media Server - End-to-End Test")
 	fmt.Println("===================================")
 
@@ -212,9 +212,18 @@ func RunE2ETest() {
 	// Ensure server is stopped on exit
 	defer stopKarlServer(cmd)
 
-	// Check metrics endpoint
-	if err := checkMetricsEndpoint(); err != nil {
-		log.Fatalf("Metrics check failed: %v", err)
+	// Wait for server to be ready with a retry loop
+	fmt.Println("Waiting for server to be ready...")
+	var ready bool
+	for i := 0; i < 15; i++ {
+		if err := checkMetricsEndpoint(); err == nil {
+			ready = true
+			break
+		}
+		time.Sleep(1 * time.Second)
+	}
+	if !ready {
+		log.Fatalf("Metrics check failed after 15 seconds")
 	}
 
 	// Channel to signal packet sender to stop

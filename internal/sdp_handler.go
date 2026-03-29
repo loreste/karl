@@ -3,7 +3,6 @@ package internal
 import (
 	"fmt"
 	"log"
-	"net"
 	"strings"
 )
 
@@ -112,22 +111,4 @@ func EnsureSDPCompatibility(sdp string, isWebRTC bool) string {
 	return strings.Join(lines, "\n")
 }
 
-// getLocalIPAddress detects the correct local IP address
-// Renamed to avoid conflict with GetLocalIP in config_loader.go
-func getLocalIPAddress() (string, error) {
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		return "", err
-	}
 
-	for _, addr := range addrs {
-		ipNet, ok := addr.(*net.IPNet)
-		if ok && !ipNet.IP.IsLoopback() {
-			if ipNet.IP.To4() != nil {
-				return ipNet.IP.String(), nil
-			}
-		}
-	}
-
-	return "", fmt.Errorf("unable to determine local IP")
-}

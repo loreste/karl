@@ -20,7 +20,7 @@ const (
 type CodecConverter struct {
 	sampleRate int
 	channels   int
-	frameSize  int
+
 }
 
 // NewCodecConverter creates a new codec converter instance
@@ -28,7 +28,7 @@ func NewCodecConverter(sampleRate, channels, frameSize int) *CodecConverter {
 	return &CodecConverter{
 		sampleRate: sampleRate,
 		channels:   channels,
-		frameSize:  frameSize,
+
 	}
 }
 
@@ -127,7 +127,7 @@ type pureGoOpusEncoder struct {
 	sampleRate int
 	channels   int
 	bitrate    int
-	frameSize  int
+
 	complexity int
 	packetLoss int
 	frameCount uint32
@@ -535,10 +535,4 @@ func CalculateRMS(pcm []int16) float64 {
 	return math.Sqrt(float64(sumSquares) / float64(len(pcm)))
 }
 
-// min returns the smaller of x or y
-func min(x, y int) int {
-	if x < y {
-		return x
-	}
-	return y
-}
+

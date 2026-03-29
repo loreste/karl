@@ -114,19 +114,21 @@ func InitMetrics() {
 }
 
 // StartMetricsServer starts the metrics HTTP server with proper timeouts and error handling
-func StartMetricsServer(address string) error {
+func StartMetricsServer(address string, mux *http.ServeMux) error {
 	if address == "" {
 		address = ":9091" // Default metrics port
 	}
 
 	// Create a dedicated mux for metrics
-	mux := http.NewServeMux()
+	if mux == nil {
+		mux = http.NewServeMux()
+	}
 	mux.Handle("/metrics", promhttp.Handler())
 
 	// Add a health endpoint
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
+		_, _ = w.Write([]byte("OK"))
 	})
 
 	// Create server with proper timeouts
@@ -220,16 +222,13 @@ func collectSystemMetrics() {
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 
-	for {
-		select {
-		case <-ticker.C:
-			// Update goroutine count
-			goroutinesGauge.Set(float64(runtime.NumGoroutine()))
+	for range ticker.C {
+		// Update goroutine count
+		goroutinesGauge.Set(float64(runtime.NumGoroutine()))
 
-			// Update memory usage
-			var memStats runtime.MemStats
-			runtime.ReadMemStats(&memStats)
-			memoryUsage.Set(float64(memStats.Alloc))
-		}
+		// Update memory usage
+		var memStats runtime.MemStats
+		runtime.ReadMemStats(&memStats)
+		memoryUsage.Set(float64(memStats.Alloc))
 	}
 }

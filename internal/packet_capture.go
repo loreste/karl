@@ -68,7 +68,7 @@ func CapturePacket(packet []byte) {
 		return
 	}
 
-	pcapWriter.WritePacket(gopacket.CaptureInfo{
+	_ = pcapWriter.WritePacket(gopacket.CaptureInfo{
 		Timestamp:     time.Now(),
 		CaptureLength: len(packet),
 		Length:        len(packet),

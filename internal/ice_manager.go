@@ -34,7 +34,7 @@ func NewICEManager(iceServers []webrtc.ICEServer) (*ICEManager, error) {
 	manager := &ICEManager{agent: agent}
 
 	// Monitor candidate selection
-	agent.OnCandidate(func(candidate ice.Candidate) {
+	_ = agent.OnCandidate(func(candidate ice.Candidate) {
 		if candidate != nil {
 			manager.selectBestCandidate(candidate)
 		}

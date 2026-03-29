@@ -75,5 +75,5 @@ func (r *RTPengineSocketListener) handleCommand(conn net.Conn) {
 	log.Printf("📡 Received RTP command: %s", command)
 
 	// Example: Send response
-	conn.Write([]byte("OK\n"))
+	_, _ = conn.Write([]byte("OK\n"))
 }
