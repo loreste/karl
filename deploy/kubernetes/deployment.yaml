@@ -1,0 +1,110 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: karl
+  labels:
+    app: karl
+    app.kubernetes.io/name: karl
+    app.kubernetes.io/component: media-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: karl
+  template:
+    metadata:
+      labels:
+        app: karl
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9091"
+        prometheus.io/path: "/metrics"
+    spec:
+      # Use host network for RTP media - simplest approach for media servers
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+
+      containers:
+      - name: karl
+        image: loreste/karl:latest
+        imagePullPolicy: Always
+
+        ports:
+        - name: ng-protocol
+          containerPort: 22222
+          protocol: UDP
+        - name: api
+          containerPort: 8080
+          protocol: TCP
+        - name: health
+          containerPort: 8086
+          protocol: TCP
+        - name: metrics
+          containerPort: 9091
+          protocol: TCP
+
+        env:
+        - name: KARL_LOG_LEVEL
+          value: "info"
+        - name: KARL_CONFIG_PATH
+          value: "/etc/karl/config.json"
+
+        volumeMounts:
+        - name: config
+          mountPath: /etc/karl
+          readOnly: true
+        - name: recordings
+          mountPath: /var/lib/karl/recordings
+
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8086
+          initialDelaySeconds: 10
+          periodSeconds: 15
+          timeoutSeconds: 5
+          failureThreshold: 3
+
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8086
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "2000m"
+
+        securityContext:
+          readOnlyRootFilesystem: false
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+
+      volumes:
+      - name: config
+        configMap:
+          name: karl-config
+      - name: recordings
+        persistentVolumeClaim:
+          claimName: karl-recordings
+
+      # Prefer scheduling on nodes with low latency
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+              - key: node-role.kubernetes.io/media
+                operator: Exists

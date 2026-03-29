@@ -1,0 +1,101 @@
+{
+  "version": "1.0.0",
+  "environment": "production",
+
+  "transport": {
+    "udp_enabled": true,
+    "udp_port": 12000,
+    "tcp_enabled": false,
+    "ipv6_enabled": false,
+    "mtu": 1500
+  },
+
+  "ng_protocol": {
+    "enabled": true,
+    "udp_port": 22222,
+    "timeout": 30
+  },
+
+  "sessions": {
+    "max_sessions": 10000,
+    "session_ttl": 3600,
+    "cleanup_interval": 60,
+    "min_port": 30000,
+    "max_port": 40000
+  },
+
+  "jitter_buffer": {
+    "enabled": true,
+    "min_delay": 20,
+    "max_delay": 200,
+    "target_delay": 50,
+    "adaptive_mode": true,
+    "max_size": 100
+  },
+
+  "rtcp": {
+    "enabled": true,
+    "interval": 5,
+    "reduced_size": false,
+    "mux_enabled": true
+  },
+
+  "fec": {
+    "enabled": true,
+    "block_size": 48,
+    "redundancy": 0.30,
+    "adaptive_mode": true,
+    "max_redundancy": 0.50,
+    "min_redundancy": 0.10
+  },
+
+  "recording": {
+    "enabled": true,
+    "base_path": "/var/lib/karl/recordings",
+    "format": "wav",
+    "mode": "stereo",
+    "sample_rate": 8000,
+    "bits_per_sample": 16,
+    "retention_days": 30
+  },
+
+  "api": {
+    "enabled": true,
+    "address": ":8080",
+    "auth_enabled": false,
+    "rate_limit_per_min": 120,
+    "cors_enabled": true,
+    "cors_origins": "*"
+  },
+
+  "webrtc": {
+    "enabled": true,
+    "stun_servers": [
+      "stun:stun.l.google.com:19302"
+    ],
+    "max_bitrate": 2000000,
+    "bw_estimation": true
+  },
+
+  "integration": {
+    "media_ip": "auto",
+    "keepalive_interval": 30
+  },
+
+  "database": {
+    "mysql_dsn": "karl:karlpassword@tcp(mysql:3306)/karl",
+    "redis_enabled": true,
+    "redis_addr": "redis:6379"
+  },
+
+  "srtp": {
+    "srtp_key": "",
+    "srtp_salt": ""
+  },
+
+  "alert_settings": {
+    "packet_loss_threshold": 0.05,
+    "jitter_threshold": 50.0,
+    "notify_admin": false
+  }
+}

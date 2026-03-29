@@ -1,0 +1,19 @@
+# ServiceMonitor for Prometheus Operator
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: karl
+  labels:
+    app: karl
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: karl
+  endpoints:
+  - port: metrics
+    interval: 15s
+    path: /metrics
+  namespaceSelector:
+    matchNames:
+    - default
