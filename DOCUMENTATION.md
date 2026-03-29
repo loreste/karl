@@ -4,406 +4,993 @@
 
 - [Installation](#installation)
 - [Configuration](#configuration)
-- [API Reference](#api-reference)
+- [NG Protocol Reference](#ng-protocol-reference)
+- [REST API Reference](#rest-api-reference)
+- [Recording System](#recording-system)
+- [Monitoring & Metrics](#monitoring--metrics)
 - [Development](#development)
 - [Troubleshooting](#troubleshooting)
+
+---
 
 ## Installation
 
 ### Prerequisites
 
-- Go 1.23.2 or higher
-- MySQL/MariaDB for database storage
-- Redis (optional) for caching
-- Prometheus (optional) for metrics
+- Go 1.21 or higher
+- MySQL/MariaDB (optional, for CDR and session persistence)
+- Redis (optional, for distributed caching)
+- Prometheus (optional, for metrics collection)
 
 ### From Source
 
 ```bash
 # Clone the repository
-git clone https://github.com/karlmediaserver/karl.git
+git clone https://github.com/loreste/karl.git
 cd karl
 
 # Build the application
 go build -o karl
 
 # Create configuration directory
-mkdir -p /etc/karl
+sudo mkdir -p /etc/karl
+sudo mkdir -p /var/lib/karl/recordings
+sudo mkdir -p /var/run/karl
 
 # Copy example configuration
-cp config/config.json /etc/karl/
+sudo cp config/config.json /etc/karl/
+
+# Run
+./karl -config /etc/karl/config.json
 ```
 
 ### Using Docker
 
 ```bash
-# Pull the latest image
-docker pull karlmediaserver/karl:latest
-
 # Run with default configuration
-docker run -p 12000:12000/udp -p 9091:9091 karlmediaserver/karl:latest
+docker run -d \
+  --name karl \
+  -p 22222:22222/udp \
+  -p 30000-40000:30000-40000/udp \
+  -p 8080:8080 \
+  -p 8086:8086 \
+  -p 9091:9091 \
+  loreste/karl:latest
 
 # Run with custom configuration
-docker run -v /path/to/your/config.json:/etc/karl/config.json \
-  -p 12000:12000/udp -p 9091:9091 karlmediaserver/karl:latest
+docker run -d \
+  --name karl \
+  -v /path/to/config.json:/etc/karl/config.json \
+  -v /path/to/recordings:/var/lib/karl/recordings \
+  -p 22222:22222/udp \
+  -p 30000-40000:30000-40000/udp \
+  -p 8080:8080 \
+  loreste/karl:latest
+```
+
+### Docker Compose
+
+```yaml
+version: '3.8'
+services:
+  karl:
+    image: loreste/karl:latest
+    ports:
+      - "22222:22222/udp"
+      - "30000-40000:30000-40000/udp"
+      - "8080:8080"
+      - "8086:8086"
+      - "9091:9091"
+    volumes:
+      - ./config.json:/etc/karl/config.json
+      - recordings:/var/lib/karl/recordings
+    depends_on:
+      - mysql
+      - redis
+
+  mysql:
+    image: mariadb:10.11
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: karl
+      MYSQL_USER: karl
+      MYSQL_PASSWORD: karlpassword
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+
+volumes:
+  recordings:
+  mysql_data:
+  redis_data:
 ```
 
 ### System Requirements
 
-- CPU: 2+ cores recommended for moderate traffic
-- RAM: 2GB minimum, 4GB+ recommended
-- Network: Low-latency connection recommended for media handling
-- Disk: 50MB for application, plus space for logs and recordings
+| Resource | Minimum | Recommended |
+|----------|---------|-------------|
+| CPU | 2 cores | 4+ cores |
+| RAM | 2 GB | 4+ GB |
+| Disk | 100 MB (application) | + recording storage |
+| Network | 100 Mbps | 1 Gbps |
+
+### Systemd Service
+
+```ini
+# /etc/systemd/system/karl.service
+[Unit]
+Description=Karl Media Server
+After=network.target mysql.service redis.service
+
+[Service]
+Type=simple
+User=karl
+Group=karl
+ExecStart=/usr/local/bin/karl -config /etc/karl/config.json
+Restart=always
+RestartSec=5
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+```
+
+---
 
 ## Configuration
 
-Karl Media Server uses a JSON configuration file located at `config/config.json`. 
+Karl uses a JSON configuration file. All settings have sensible defaults.
 
-### Configuration Options
-
-#### Transport Settings
+### Complete Configuration Reference
 
 ```json
-"transport": {
-  "udp_enabled": true,
-  "udp_port": 12000,
-  "tcp_enabled": true,
-  "tcp_port": 12001,
-  "tls_enabled": true,
-  "tls_port": 12002,
-  "tls_cert": "certs/server.crt",
-  "tls_key": "certs/server.key"
+{
+  "version": "1.0.0",
+  "environment": "production",
+
+  "transport": {
+    "udp_enabled": true,
+    "udp_port": 12000,
+    "tcp_enabled": false,
+    "tcp_port": 12001,
+    "tls_enabled": false,
+    "tls_port": 12002,
+    "tls_cert": "/etc/karl/certs/server.crt",
+    "tls_key": "/etc/karl/certs/server.key",
+    "ipv6_enabled": false,
+    "mtu": 1500
+  },
+
+  "ng_protocol": {
+    "enabled": true,
+    "socket_path": "/var/run/karl/karl.sock",
+    "udp_port": 22222,
+    "timeout": 30
+  },
+
+  "sessions": {
+    "max_sessions": 10000,
+    "session_ttl": 3600,
+    "cleanup_interval": 60,
+    "min_port": 30000,
+    "max_port": 40000
+  },
+
+  "jitter_buffer": {
+    "enabled": true,
+    "min_delay": 20,
+    "max_delay": 200,
+    "target_delay": 50,
+    "adaptive_mode": true,
+    "max_size": 100
+  },
+
+  "rtcp": {
+    "enabled": true,
+    "interval": 5,
+    "reduced_size": false,
+    "mux_enabled": true
+  },
+
+  "fec": {
+    "enabled": true,
+    "block_size": 48,
+    "redundancy": 0.30,
+    "adaptive_mode": true,
+    "max_redundancy": 0.50,
+    "min_redundancy": 0.10
+  },
+
+  "recording": {
+    "enabled": true,
+    "base_path": "/var/lib/karl/recordings",
+    "format": "wav",
+    "mode": "stereo",
+    "sample_rate": 8000,
+    "bits_per_sample": 16,
+    "max_file_size": 104857600,
+    "retention_days": 30
+  },
+
+  "api": {
+    "enabled": true,
+    "address": ":8080",
+    "auth_enabled": false,
+    "rate_limit_per_min": 60,
+    "cors_enabled": false,
+    "cors_origins": "*"
+  },
+
+  "webrtc": {
+    "enabled": true,
+    "webrtc_port": 8443,
+    "stun_servers": [
+      "stun:stun.l.google.com:19302",
+      "stun:stun1.l.google.com:19302"
+    ],
+    "turn_servers": [],
+    "max_bitrate": 2000000,
+    "start_bitrate": 1000000,
+    "bw_estimation": true,
+    "tcc_enabled": true
+  },
+
+  "integration": {
+    "opensips_ip": "",
+    "opensips_port": 0,
+    "kamailio_ip": "",
+    "kamailio_port": 0,
+    "media_ip": "auto",
+    "public_ip": "",
+    "keepalive_interval": 30
+  },
+
+  "database": {
+    "mysql_dsn": "",
+    "redis_enabled": false,
+    "redis_addr": "localhost:6379",
+    "redis_cleanup_interval": 3600,
+    "max_connections": 10,
+    "connection_timeout": 30
+  },
+
+  "srtp": {
+    "srtp_key": "",
+    "srtp_salt": ""
+  },
+
+  "alert_settings": {
+    "packet_loss_threshold": 0.05,
+    "jitter_threshold": 50.0,
+    "bandwidth_threshold": 1000000,
+    "notify_admin": false,
+    "admin_email": "",
+    "slack_webhook": ""
+  }
 }
 ```
 
-| Setting | Description | Default |
-|---------|-------------|---------|
-| udp_enabled | Enable UDP transport | true |
-| udp_port | UDP port for RTP/RTCP | 12000 |
-| tcp_enabled | Enable TCP transport | true |
-| tcp_port | TCP port for RTP/RTCP | 12001 |
-| tls_enabled | Enable TLS transport | true |
-| tls_port | TLS port for secure RTP/RTCP | 12002 |
-| tls_cert | Path to TLS certificate | certs/server.crt |
-| tls_key | Path to TLS private key | certs/server.key |
+### Configuration Sections
 
-#### WebRTC Settings
+#### NG Protocol (`ng_protocol`)
 
-```json
-"webrtc": {
-  "enabled": true,
-  "webrtc_port": 8443,
-  "stun_servers": [
-    "stun:stun.l.google.com:19302",
-    "stun:stun1.l.google.com:19302"
-  ],
-  "turn_servers": [
-    {
-      "url": "turn:your-turn-server.com:3478",
-      "username": "turnuser",
-      "credential": "turnpass"
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `enabled` | bool | `true` | Enable NG protocol listener |
+| `socket_path` | string | `/var/run/karl/karl.sock` | Unix socket path |
+| `udp_port` | int | `22222` | UDP port for NG protocol |
+| `timeout` | int | `30` | Request timeout in seconds |
+
+#### Sessions (`sessions`)
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `max_sessions` | int | `10000` | Maximum concurrent sessions |
+| `session_ttl` | int | `3600` | Session time-to-live in seconds |
+| `cleanup_interval` | int | `60` | Stale session cleanup interval |
+| `min_port` | int | `30000` | Minimum RTP port |
+| `max_port` | int | `40000` | Maximum RTP port |
+
+#### Jitter Buffer (`jitter_buffer`)
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `enabled` | bool | `true` | Enable jitter buffer |
+| `min_delay` | int | `20` | Minimum delay in milliseconds |
+| `max_delay` | int | `200` | Maximum delay in milliseconds |
+| `target_delay` | int | `50` | Target delay in milliseconds |
+| `adaptive_mode` | bool | `true` | Enable adaptive sizing |
+| `max_size` | int | `100` | Maximum buffer size in packets |
+
+#### Forward Error Correction (`fec`)
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `enabled` | bool | `true` | Enable FEC |
+| `block_size` | int | `48` | Packets per FEC block |
+| `redundancy` | float | `0.30` | Redundancy ratio (0.0-1.0) |
+| `adaptive_mode` | bool | `true` | Adjust based on loss rate |
+| `max_redundancy` | float | `0.50` | Maximum redundancy |
+| `min_redundancy` | float | `0.10` | Minimum redundancy |
+
+#### Recording (`recording`)
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `enabled` | bool | `false` | Enable recording system |
+| `base_path` | string | `/var/lib/karl/recordings` | Recording storage path |
+| `format` | string | `wav` | Output format (`wav`, `pcm`) |
+| `mode` | string | `stereo` | Recording mode (`mixed`, `stereo`, `separate`) |
+| `sample_rate` | int | `8000` | Sample rate in Hz |
+| `bits_per_sample` | int | `16` | Bits per sample |
+| `max_file_size` | int | `104857600` | Max file size before rotation (bytes) |
+| `retention_days` | int | `30` | Days to retain recordings |
+
+#### REST API (`api`)
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `enabled` | bool | `true` | Enable REST API |
+| `address` | string | `:8080` | Listen address |
+| `auth_enabled` | bool | `false` | Enable API key authentication |
+| `rate_limit_per_min` | int | `60` | Requests per minute per client |
+| `cors_enabled` | bool | `false` | Enable CORS |
+| `cors_origins` | string | `*` | Allowed CORS origins |
+
+---
+
+## NG Protocol Reference
+
+Karl implements the rtpengine NG protocol for compatibility with OpenSIPS and Kamailio.
+
+### Protocol Format
+
+Messages use bencode encoding with a cookie prefix:
+
+```
+<cookie> <bencoded-message>
+```
+
+### Commands
+
+#### ping
+
+Health check command.
+
+**Request:**
+```
+d7:command4:pinge
+```
+
+**Response:**
+```
+d6:result4:ponge
+```
+
+#### offer
+
+Process SDP offer for new or existing call.
+
+**Request parameters:**
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `call-id` | Yes | Unique call identifier |
+| `from-tag` | Yes | SIP From-tag |
+| `sdp` | Yes | SDP offer |
+| `ICE` | No | ICE handling (`remove`, `force`) |
+| `DTLS` | No | DTLS handling (`passive`, `active`) |
+| `SDES` | No | SDES handling (`off`, `unencrypted`) |
+| `direction` | No | Media direction |
+| `replace` | No | SDP elements to replace |
+| `flags` | No | Additional flags |
+
+**Response:**
+```
+d6:result2:ok3:sdp...e
+```
+
+#### answer
+
+Process SDP answer for existing call.
+
+**Request parameters:**
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `call-id` | Yes | Call identifier |
+| `from-tag` | Yes | SIP From-tag |
+| `to-tag` | Yes | SIP To-tag |
+| `sdp` | Yes | SDP answer |
+
+#### delete
+
+Terminate call and release resources.
+
+**Request parameters:**
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `call-id` | Yes | Call identifier |
+| `from-tag` | No | Specific party to delete |
+| `to-tag` | No | Specific party to delete |
+
+#### query
+
+Get call statistics.
+
+**Request parameters:**
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `call-id` | Yes | Call identifier |
+
+**Response includes:**
+- Total call duration
+- Packets sent/received per leg
+- Bytes sent/received per leg
+- Packet loss statistics
+- Jitter measurements
+
+#### list
+
+List all active calls.
+
+**Response:**
+```
+d6:result2:ok5:callsl...ee
+```
+
+#### start recording
+
+Start recording a call.
+
+**Request parameters:**
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `call-id` | Yes | Call identifier |
+
+#### stop recording
+
+Stop recording a call.
+
+**Request parameters:**
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `call-id` | Yes | Call identifier |
+
+### Integration Examples
+
+#### OpenSIPS
+
+```opensips
+loadmodule "rtpengine.so"
+
+modparam("rtpengine", "rtpengine_sock", "udp:127.0.0.1:22222")
+
+route {
+    if (is_method("INVITE")) {
+        rtpengine_manage("ICE=remove RTP/AVP");
     }
-  ]
+
+    if (is_method("BYE")) {
+        rtpengine_delete();
+    }
+}
+
+onreply_route {
+    if (has_body("application/sdp")) {
+        rtpengine_manage("ICE=remove RTP/AVP");
+    }
 }
 ```
 
-| Setting | Description | Default |
-|---------|-------------|---------|
-| enabled | Enable WebRTC support | true |
-| webrtc_port | Port for WebRTC signaling | 8443 |
-| stun_servers | Array of STUN server URLs | ["stun:stun.l.google.com:19302"] |
-| turn_servers | Array of TURN server configurations | [] |
+#### Kamailio
 
-#### Integration Settings
+```kamailio
+loadmodule "rtpengine.so"
 
-```json
-"integration": {
-  "opensips_ip": "127.0.0.1",
-  "opensips_port": 5060,
-  "kamailio_ip": "127.0.0.1",
-  "kamailio_port": 5061,
-  "rtpengine_socket": "/var/run/karl/rtpengine.sock",
-  "unix_socket_path": "/var/run/karl/karl.sock",
-  "media_ip": "192.168.1.100"
+modparam("rtpengine", "rtpengine_sock", "udp:127.0.0.1:22222")
+
+request_route {
+    if (is_method("INVITE")) {
+        rtpengine_manage("ICE=remove");
+    }
+
+    if (is_method("BYE")) {
+        rtpengine_delete();
+    }
+}
+
+onreply_route[MANAGE_REPLY] {
+    if (has_body("application/sdp")) {
+        rtpengine_manage("ICE=remove");
+    }
 }
 ```
 
-| Setting | Description | Default |
-|---------|-------------|---------|
-| opensips_ip | OpenSIPS server IP | 127.0.0.1 |
-| opensips_port | OpenSIPS SIP port | 5060 |
-| kamailio_ip | Kamailio server IP | 127.0.0.1 |
-| kamailio_port | Kamailio SIP port | 5061 |
-| rtpengine_socket | Path to RTPengine socket | /var/run/karl/rtpengine.sock |
-| unix_socket_path | Path to Karl socket | /var/run/karl/karl.sock |
-| media_ip | Local media IP address | (Auto-detected) |
+---
 
-#### Database Settings
-
-```json
-"database": {
-  "mysql_dsn": "user:password@tcp(localhost:3306)/rtpdb",
-  "redis_enabled": true,
-  "redis_addr": "localhost:6379",
-  "redis_cleanup_interval": 3600
-}
-```
-
-| Setting | Description | Default |
-|---------|-------------|---------|
-| mysql_dsn | MySQL connection string | "" |
-| redis_enabled | Enable Redis caching | false |
-| redis_addr | Redis server address | localhost:6379 |
-| redis_cleanup_interval | Session cleanup interval (seconds) | 3600 |
-
-#### SRTP Settings
-
-```json
-"srtp": {
-  "srtp_key": "your-base64-encoded-key",
-  "srtp_salt": "your-base64-encoded-salt"
-}
-```
-
-| Setting | Description | Default |
-|---------|-------------|---------|
-| srtp_key | Base64-encoded SRTP master key | (Generated) |
-| srtp_salt | Base64-encoded SRTP master salt | (Generated) |
-
-### Environment Variables
-
-Karl Media Server also supports configuration via environment variables:
-
-| Variable | Description | Example |
-|----------|-------------|---------|
-| KARL_CONFIG_PATH | Custom config path | /etc/karl/custom-config.json |
-| KARL_LOG_LEVEL | Log verbosity (1-5) | 3 |
-| KARL_METRICS_PORT | Metrics port | 9091 |
-| KARL_MEDIA_IP | Override media IP | 192.168.1.100 |
-| KARL_SRTP_KEY | SRTP master key | (base64 encoded key) |
-| KARL_SRTP_SALT | SRTP master salt | (base64 encoded salt) |
-
-## API Reference
-
-Karl Media Server provides a RESTful API for management and monitoring.
+## REST API Reference
 
 ### Base URL
 
-All API endpoints are available at:
+```
+http://<server>:8080/api/v1
+```
+
+### Authentication
+
+When `auth_enabled` is true, include the API key in the header:
 
 ```
-http://<server-address>:9091/api/v1
+Authorization: Bearer <api-key>
 ```
 
 ### Endpoints
 
-#### Health Check
+#### Sessions
 
+**List Sessions**
+```http
+GET /api/v1/sessions
 ```
+
+Response:
+```json
+{
+  "sessions": [
+    {
+      "id": "abc123",
+      "call_id": "call-456",
+      "state": "active",
+      "created_at": "2024-01-15T10:30:00Z",
+      "caller": {
+        "ip": "192.168.1.100",
+        "port": 30000
+      },
+      "callee": {
+        "ip": "192.168.1.101",
+        "port": 30002
+      }
+    }
+  ],
+  "total": 1
+}
+```
+
+**Get Session**
+```http
+GET /api/v1/sessions/{id}
+```
+
+**Delete Session**
+```http
+DELETE /api/v1/sessions/{id}
+```
+
+#### Statistics
+
+**Aggregate Statistics**
+```http
+GET /api/v1/stats
+```
+
+Response:
+```json
+{
+  "active_sessions": 42,
+  "total_sessions": 15234,
+  "packets_sent": 1234567,
+  "packets_received": 1234000,
+  "bytes_sent": 98765432,
+  "bytes_received": 98700000,
+  "avg_jitter_ms": 12.5,
+  "avg_packet_loss": 0.002
+}
+```
+
+**Call Statistics**
+```http
+GET /api/v1/stats/{call_id}
+```
+
+#### Recording
+
+**Start Recording**
+```http
+POST /api/v1/recording/start
+Content-Type: application/json
+
+{
+  "session_id": "abc123",
+  "mode": "stereo"
+}
+```
+
+**Stop Recording**
+```http
+POST /api/v1/recording/stop
+Content-Type: application/json
+
+{
+  "session_id": "abc123"
+}
+```
+
+**List Recordings**
+```http
+GET /api/v1/recordings
+```
+
+**Get Recording**
+```http
+GET /api/v1/recordings/{id}
+```
+
+**Delete Recording**
+```http
+DELETE /api/v1/recordings/{id}
+```
+
+#### Health
+
+**Simple Health Check**
+```http
 GET /health
 ```
 
-Returns server health status.
+Response:
+```json
+{
+  "status": "healthy"
+}
+```
+
+**Detailed Health**
+```http
+GET /health/detail
+```
 
 Response:
 ```json
 {
   "status": "healthy",
-  "uptime": "3h15m20s",
-  "version": "1.0.0"
-}
-```
-
-#### Configuration Management
-
-```
-GET /config
-```
-
-Returns current server configuration.
-
-```
-POST /config
-```
-
-Updates server configuration dynamically.
-
-Request body:
-```json
-{
-  "webrtc": {
-    "enabled": true,
-    "stun_servers": ["stun:stun.l.google.com:19302"]
+  "components": {
+    "ng_listener": {
+      "status": "UP",
+      "details": {
+        "uptime": "24h15m30s",
+        "active_calls": "42"
+      }
+    },
+    "database": {
+      "status": "UP"
+    },
+    "redis": {
+      "status": "UP"
+    }
   }
 }
 ```
 
-#### RTP Statistics
+---
+
+## Recording System
+
+### Recording Modes
+
+| Mode | Description | Output |
+|------|-------------|--------|
+| `mixed` | Both parties mixed into mono | Single file |
+| `stereo` | Caller on left, callee on right | Single file |
+| `separate` | Each party in separate file | Two files |
+
+### File Naming
+
+Recordings are stored with the following naming convention:
 
 ```
-GET /stats/rtp
+{base_path}/{YYYY-MM-DD}/{call_id}_{timestamp}_{mode}.wav
 ```
 
-Returns RTP statistics.
-
-Response:
-```json
-{
-  "packets_received": 12500,
-  "packets_sent": 12450,
-  "packets_dropped": 50,
-  "active_sessions": 5
-}
+Example:
+```
+/var/lib/karl/recordings/2024-01-15/call-123_1705312200_stereo.wav
 ```
 
-#### WebRTC Statistics
+### Codec Support
 
-```
-GET /stats/webrtc
+Karl automatically transcodes to PCM for recording:
+
+| Input Codec | Supported |
+|-------------|-----------|
+| G.711 u-law | Yes |
+| G.711 a-law | Yes |
+| Opus | Yes |
+| G.722 | Yes |
+
+---
+
+## Monitoring & Metrics
+
+### Prometheus Metrics
+
+Karl exposes metrics at `:9091/metrics`.
+
+#### Session Metrics
+
+```prometheus
+# Active sessions
+karl_sessions_active
+
+# Total sessions created
+karl_sessions_total
+
+# Session duration histogram
+karl_session_duration_seconds_bucket{le="10"}
+karl_session_duration_seconds_bucket{le="60"}
+karl_session_duration_seconds_bucket{le="300"}
+karl_session_duration_seconds_bucket{le="3600"}
 ```
 
-Returns WebRTC statistics.
+#### RTCP Metrics
 
-Response:
-```json
-{
-  "active_connections": 3,
-  "ice_stats": {
-    "succeeded": 8,
-    "failed": 1
-  }
-}
+```prometheus
+# RTCP packets sent/received
+karl_rtcp_sr_sent_total
+karl_rtcp_rr_sent_total
+karl_rtcp_sr_received_total
+karl_rtcp_rr_received_total
+
+# Round-trip time
+karl_rtcp_rtt_seconds
+
+# Jitter
+karl_rtcp_jitter_seconds
+
+# Packet loss
+karl_rtcp_packet_loss_fraction
 ```
+
+#### FEC Metrics
+
+```prometheus
+# FEC packets sent
+karl_fec_packets_sent_total
+
+# Successful recoveries
+karl_fec_recoveries_total
+
+# Recovery failures
+karl_fec_recovery_failures_total
+
+# Current redundancy ratio
+karl_fec_redundancy_ratio
+```
+
+#### Jitter Buffer Metrics
+
+```prometheus
+# Buffer size
+karl_jitter_buffer_size{session_id="..."}
+
+# Buffer latency
+karl_jitter_buffer_latency_seconds{session_id="..."}
+
+# Dropped packets
+karl_jitter_buffer_packets_dropped_total{session_id="...", reason="late|duplicate|overflow"}
+```
+
+#### API Metrics
+
+```prometheus
+# Request count
+karl_api_requests_total{endpoint="/sessions", method="GET", status="200"}
+
+# Request duration
+karl_api_request_duration_seconds{endpoint="/sessions"}
+```
+
+### Grafana Dashboard
+
+Import the included Grafana dashboard from `grafana/karl-dashboard.json` for comprehensive visualization.
+
+### Alerting Rules
+
+Example Prometheus alerting rules:
+
+```yaml
+groups:
+  - name: karl
+    rules:
+      - alert: HighPacketLoss
+        expr: karl_rtcp_packet_loss_fraction > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High packet loss detected"
+
+      - alert: NoActiveSessions
+        expr: karl_sessions_active == 0
+        for: 10m
+        labels:
+          severity: info
+        annotations:
+          summary: "No active sessions"
+```
+
+---
 
 ## Development
 
 ### Building from Source
 
 ```bash
-# Clone the repository
-git clone https://github.com/karlmediaserver/karl.git
+git clone https://github.com/loreste/karl.git
 cd karl
 
-# Get dependencies
+# Install dependencies
 go mod download
 
-# Build the application
+# Run tests
+go test ./...
+
+# Run tests with race detection
+go test -race ./...
+
+# Run benchmarks
+go test -bench=. ./internal/tests/...
+
+# Build
 go build -o karl
 ```
 
-### Testing
+### Running Tests
 
 ```bash
-# Run all tests
+# All tests
 go test ./...
 
-# Run tests with coverage
-go test -cover ./...
+# With coverage
+go test -coverprofile=coverage.out ./...
+go tool cover -html=coverage.out
 
-# Run specific tests
-go test ./internal/tests/codec_converter_test.go
-```
-
-### Development Environment
-
-It's recommended to set up a development environment with:
-
-1. MySQL or MariaDB for database functionality
-2. Redis for caching (optional)
-3. Prometheus for metrics monitoring (optional)
-
-You can use the following docker-compose file for a quick setup:
-
-```yaml
-version: '3'
-services:
-  mysql:
-    image: mariadb:10.8
-    environment:
-      MYSQL_ROOT_PASSWORD: password
-      MYSQL_DATABASE: rtpdb
-      MYSQL_USER: karl
-      MYSQL_PASSWORD: karl
-    ports:
-      - "3306:3306"
-    volumes:
-      - ./mysql_schema.sql:/docker-entrypoint-initdb.d/mysql_schema.sql
-
-  redis:
-    image: redis:7.0
-    ports:
-      - "6379:6379"
-
-  prometheus:
-    image: prom/prometheus:v2.36.0
-    ports:
-      - "9090:9090"
-    volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+# Stress tests
+go test -v ./internal/tests/... -run "Stress|Concurrency|Memory|Goroutine"
 ```
 
 ### Code Structure
 
-- `main.go` - Application entry point
-- `server.go` - Core server implementation
-- `config.go` - Configuration handling
-- `services.go` - Service initialization
-- `webrtc.go` - WebRTC handling
-- `internal/` - Internal package with core functionality
-  - `codec_converter.go` - Codec conversion utilities
-  - `config_loader.go` - Configuration loading and validation
-  - `rtp_control.go` - RTP packet handling
-  - `sip_register.go` - SIP registration
+```
+karl/
+├── main.go                 # Entry point
+├── server.go               # Core server
+├── services.go             # Service initialization
+├── config.go               # Configuration loading
+├── webrtc.go               # WebRTC handling
+├── internal/
+│   ├── session_manager.go  # Session registry
+│   ├── ng_socket_listener.go # NG protocol handler
+│   ├── rtcp_handler.go     # RTCP implementation
+│   ├── jitter_buffer.go    # Adaptive jitter buffer
+│   ├── fec_handler.go      # Forward error correction
+│   ├── rtp_control.go      # RTP packet handling
+│   ├── api/
+│   │   ├── router.go       # REST API router
+│   │   └── handlers_*.go   # API handlers
+│   ├── auth/
+│   │   ├── apikey.go       # API key auth
+│   │   └── ratelimit.go    # Rate limiting
+│   ├── recording/
+│   │   ├── recorder.go     # Recording engine
+│   │   ├── mixer.go        # Audio mixing
+│   │   └── manager.go      # Recording lifecycle
+│   └── ng_protocol/
+│       ├── bencode.go      # Bencode encoding
+│       ├── types.go        # Protocol types
+│       └── commands/       # Command handlers
+└── config/
+    └── config.json         # Example configuration
+```
+
+---
 
 ## Troubleshooting
 
 ### Common Issues
 
-#### "Failed to create /var/run/karl/"
+#### "bind: address already in use"
 
-**Problem**: Permission denied when creating the run directory.
+Another process is using the configured port.
 
-**Solution**: Either run Karl as root/with sudo, or modify the run directory in the source code to use a directory the user has permissions for.
+```bash
+# Find the process
+sudo lsof -i :22222
+sudo lsof -i :30000-40000
 
-#### "Failed to bind to UDP port"
-
-**Problem**: The configured UDP port is already in use.
-
-**Solution**: Change the UDP port in the configuration file or ensure no other application is using the configured port.
-
-#### "SRTP context is not initialized"
-
-**Problem**: Invalid SRTP key/salt configuration.
-
-**Solution**: Ensure proper base64-encoded SRTP key and salt are provided in the configuration.
-
-#### "MySQL connection test failed"
-
-**Problem**: Unable to connect to MySQL database.
-
-**Solution**: Verify MySQL server is running and the connection string in config.json is correct.
-
-### Logs
-
-Karl logs are available in the console output and in the logs directory:
-
-```
-logs/karl.log
+# Kill if necessary
+sudo kill <PID>
 ```
 
-The log level can be configured with the `KARL_LOG_LEVEL` environment variable (1-5, with 5 being most verbose).
+#### "too many open files"
+
+Increase file descriptor limits:
+
+```bash
+# Temporary
+ulimit -n 65535
+
+# Permanent - add to /etc/security/limits.conf
+karl soft nofile 65535
+karl hard nofile 65535
+```
+
+#### Sessions not being created
+
+1. Check NG protocol is enabled and port is accessible
+2. Verify SIP proxy configuration points to Karl
+3. Check logs for bencode parsing errors
+
+```bash
+# Test NG protocol connectivity
+echo -n "d7:command4:pinge" | nc -u 127.0.0.1 22222
+```
+
+#### High packet loss
+
+1. Check network path between endpoints
+2. Increase jitter buffer size
+3. Enable FEC with higher redundancy
+4. Check for CPU saturation
+
+#### Recording files are empty
+
+1. Verify recording base path exists and is writable
+2. Check that sessions are reaching "active" state
+3. Ensure codecs are supported for transcoding
+
+### Logging
+
+Set log level via environment variable:
+
+```bash
+KARL_LOG_LEVEL=debug ./karl
+```
+
+Log levels: `debug`, `info`, `warn`, `error`
+
+### Debug Mode
+
+Enable verbose protocol logging:
+
+```json
+{
+  "debug": {
+    "log_rtp_packets": true,
+    "log_rtcp_packets": true,
+    "log_ng_messages": true
+  }
+}
+```
 
 ### Getting Help
 
-If you encounter issues not covered here:
+1. Check logs: `journalctl -u karl -f`
+2. Review metrics: `curl localhost:9091/metrics`
+3. Open an issue: https://github.com/loreste/karl/issues
 
-1. Check the logs for detailed error messages
-2. Consult the GitHub repository issues
-3. Join the Karl Media Server community forum
-4. Open a new issue on GitHub with detailed information
+---
 
-## Contact and Support
+## Contact
 
-- GitHub: [https://github.com/karlmediaserver/karl](https://github.com/karlmediaserver/karl)
-- Website: [https://karlmediaserver.io](https://karlmediaserver.io)
-- Email: support@karlmediaserver.io
+- **Repository**: https://github.com/loreste/karl
+- **Issues**: https://github.com/loreste/karl/issues

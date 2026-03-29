@@ -35,6 +35,12 @@ type KarlServer struct {
 	isShuttingDown bool
 	resources      *internal.ResourceGroup // For tracking all resources
 	healthServer   *http.Server            // Health check server
+
+	// New components
+	sessionRegistry *internal.SessionRegistry
+	ngListener      *internal.NGSocketListener
+	rtcpHandler     *internal.RTCPHandler
+	fecHandler      *internal.FECHandler
 }
 
 // NewKarlServer creates and initializes a new KarlServer instance
@@ -203,6 +209,23 @@ func (k *KarlServer) Shutdown() {
 	// Stop Unix socket listener
 	if k.rtpSocket != nil {
 		k.rtpSocket.Stop()
+	}
+
+	// Stop NG socket listener
+	if k.ngListener != nil {
+		if err := k.ngListener.Stop(); err != nil {
+			log.Printf("⚠️ Error stopping NG listener: %v", err)
+		}
+	}
+
+	// Stop RTCP handler
+	if k.rtcpHandler != nil {
+		k.rtcpHandler.Stop()
+	}
+
+	// Stop session registry
+	if k.sessionRegistry != nil {
+		k.sessionRegistry.Stop()
 	}
 
 	k.mu.Unlock()

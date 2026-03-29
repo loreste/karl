@@ -87,6 +87,74 @@ var (
 		},
 		[]string{"type"},
 	)
+
+	// Session metrics
+	sessionsActive = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "karl_sessions_active",
+		Help: "Number of active sessions",
+	})
+
+	sessionsTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "karl_sessions_total",
+		Help: "Total number of sessions created",
+	})
+
+	sessionDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "karl_session_duration_seconds",
+		Help:    "Session duration in seconds",
+		Buckets: prometheus.ExponentialBuckets(1, 2, 15), // 1s to ~9 hours
+	})
+
+	// RTCP metrics (additional)
+	rtcpPacketsSent = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "karl_rtcp_packets_sent_total",
+		Help: "Total RTCP packets sent",
+	})
+
+	rtcpPacketsRecv = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "karl_rtcp_packets_received_total",
+		Help: "Total RTCP packets received",
+	})
+
+	// Recording metrics (additional)
+	recordingsActive = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "karl_recordings_active",
+		Help: "Number of active recordings",
+	})
+
+	recordingsTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "karl_recordings_total",
+		Help: "Total number of recordings",
+	})
+
+	recordingBytes = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "karl_recording_bytes_written_total",
+		Help: "Total bytes written to recordings",
+	})
+
+	// WebRTC metrics
+	webrtcPeersActive = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "karl_webrtc_peers_active",
+		Help: "Number of active WebRTC peer connections",
+	})
+
+	webrtcICECandidates = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "karl_webrtc_ice_candidates_total",
+			Help: "Total ICE candidates by type",
+		},
+		[]string{"type"},
+	)
+
+	webrtcDTLSHandshakes = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "karl_webrtc_dtls_handshakes_total",
+		Help: "Total DTLS handshakes completed",
+	})
+
+	webrtcDTLSFailures = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "karl_webrtc_dtls_failures_total",
+		Help: "Total DTLS handshake failures",
+	})
 )
 
 // Initialize and register metrics with Prometheus
@@ -106,11 +174,31 @@ func InitMetrics() {
 	prometheus.MustRegister(memoryUsage)
 	prometheus.MustRegister(operationDurations)
 
+	// Register session metrics
+	prometheus.MustRegister(sessionsActive)
+	prometheus.MustRegister(sessionsTotal)
+	prometheus.MustRegister(sessionDuration)
+
+	// Register RTCP metrics
+	prometheus.MustRegister(rtcpPacketsSent)
+	prometheus.MustRegister(rtcpPacketsRecv)
+
+	// Register recording metrics
+	prometheus.MustRegister(recordingsActive)
+	prometheus.MustRegister(recordingsTotal)
+	prometheus.MustRegister(recordingBytes)
+
+	// Register WebRTC metrics
+	prometheus.MustRegister(webrtcPeersActive)
+	prometheus.MustRegister(webrtcICECandidates)
+	prometheus.MustRegister(webrtcDTLSHandshakes)
+	prometheus.MustRegister(webrtcDTLSFailures)
+
 	// Start system metrics collection
 	go collectSystemMetrics()
 
 	// Log metrics initialization
-	log.Println("✅ Metrics system initialized")
+	log.Println("Metrics system initialized")
 }
 
 // StartMetricsServer starts the metrics HTTP server with proper timeouts and error handling
@@ -231,4 +319,56 @@ func collectSystemMetrics() {
 		runtime.ReadMemStats(&memStats)
 		memoryUsage.Set(float64(memStats.Alloc))
 	}
+}
+
+// Session metrics helpers
+func IncrementSessions() {
+	sessionsTotal.Inc()
+}
+
+func SetActiveSessionCount(count int) {
+	sessionsActive.Set(float64(count))
+}
+
+func RecordSessionDuration(duration time.Duration) {
+	sessionDuration.Observe(duration.Seconds())
+}
+
+// RTCP metrics helpers
+func IncrementRTCPSent() {
+	rtcpPacketsSent.Inc()
+}
+
+func IncrementRTCPRecv() {
+	rtcpPacketsRecv.Inc()
+}
+
+// Recording metrics helpers
+func IncrementRecordings() {
+	recordingsTotal.Inc()
+}
+
+func SetActiveRecordingCount(count int) {
+	recordingsActive.Set(float64(count))
+}
+
+func AddRecordingBytes(bytes int64) {
+	recordingBytes.Add(float64(bytes))
+}
+
+// WebRTC metrics helpers
+func SetActiveWebRTCPeers(count int) {
+	webrtcPeersActive.Set(float64(count))
+}
+
+func IncrementICECandidate(candidateType string) {
+	webrtcICECandidates.WithLabelValues(candidateType).Inc()
+}
+
+func IncrementDTLSHandshake() {
+	webrtcDTLSHandshakes.Inc()
+}
+
+func IncrementDTLSFailure() {
+	webrtcDTLSFailures.Inc()
 }

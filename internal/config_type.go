@@ -108,16 +108,192 @@ type AlertSettings struct {
 	PagerDutyKey        string  `json:"pagerduty_key"`
 }
 
+// NGProtocolConfig defines NG protocol settings
+type NGProtocolConfig struct {
+	Enabled    bool   `json:"enabled"`
+	SocketPath string `json:"socket_path"`
+	UDPPort    int    `json:"udp_port"`
+	Timeout    int    `json:"timeout"` // Request timeout in seconds
+}
+
+// RecordingConfig defines call recording settings
+type RecordingConfig struct {
+	Enabled       bool   `json:"enabled"`
+	BasePath      string `json:"base_path"`
+	Format        string `json:"format"`         // wav, pcm
+	Mode          string `json:"mode"`           // mixed, stereo, separate
+	SampleRate    int    `json:"sample_rate"`    // 8000, 16000, 48000
+	BitsPerSample int    `json:"bits_per_sample"` // 8, 16
+	MaxFileSize   int64  `json:"max_file_size"`  // Max file size in bytes before rotation
+	RetentionDays int    `json:"retention_days"` // Days to keep recordings
+}
+
+// APIConfig defines REST API settings
+type APIConfig struct {
+	Enabled         bool   `json:"enabled"`
+	Address         string `json:"address"` // Listen address (e.g., ":8080")
+	AuthEnabled     bool   `json:"auth_enabled"`
+	RateLimitPerMin int    `json:"rate_limit_per_min"`
+	CORSEnabled     bool   `json:"cors_enabled"`
+	CORSOrigins     string `json:"cors_origins"`
+	TLSEnabled      bool   `json:"tls_enabled"`
+	TLSCert         string `json:"tls_cert"`
+	TLSKey          string `json:"tls_key"`
+}
+
+// SessionConfig defines session management settings
+type SessionConfig struct {
+	MaxSessions   int `json:"max_sessions"`
+	SessionTTL    int `json:"session_ttl"`     // Session TTL in seconds
+	CleanupInterval int `json:"cleanup_interval"` // Cleanup interval in seconds
+	MinPort       int `json:"min_port"`        // Minimum RTP port
+	MaxPort       int `json:"max_port"`        // Maximum RTP port
+}
+
+// JitterBufferConfig defines jitter buffer settings
+type JitterBufferConfig struct {
+	Enabled      bool `json:"enabled"`
+	MinDelay     int  `json:"min_delay"`     // Minimum delay in ms
+	MaxDelay     int  `json:"max_delay"`     // Maximum delay in ms
+	TargetDelay  int  `json:"target_delay"`  // Target delay in ms
+	AdaptiveMode bool `json:"adaptive_mode"` // Enable adaptive jitter buffer
+	MaxSize      int  `json:"max_size"`      // Maximum buffer size in packets
+}
+
+// RTCPConfig defines RTCP settings
+type RTCPConfig struct {
+	Enabled     bool `json:"enabled"`
+	Interval    int  `json:"interval"`     // Report interval in seconds
+	ReducedSize bool `json:"reduced_size"` // Use reduced-size RTCP
+	MuxEnabled  bool `json:"mux_enabled"`  // RTCP-mux support
+}
+
+// FECConfig defines Forward Error Correction settings
+type FECConfig struct {
+	Enabled       bool    `json:"enabled"`
+	BlockSize     int     `json:"block_size"`     // Packets per FEC block
+	Redundancy    float64 `json:"redundancy"`     // Redundancy ratio (0.0-1.0)
+	AdaptiveMode  bool    `json:"adaptive_mode"`  // Adjust based on loss rate
+	MaxRedundancy float64 `json:"max_redundancy"` // Maximum redundancy
+	MinRedundancy float64 `json:"min_redundancy"` // Minimum redundancy
+}
+
 // Config struct holds all settings
 type Config struct {
-	Version       string            `json:"version"`
-	LastUpdated   time.Time         `json:"last_updated"`
-	Environment   string            `json:"environment"` // prod, staging, dev
-	Transport     TransportConfig   `json:"transport"`
-	RTPSettings   RTPSettings       `json:"rtp_settings"`
-	WebRTC        WebRTCConfig      `json:"webrtc"`
-	Integration   IntegrationConfig `json:"integration"`
-	AlertSettings AlertSettings     `json:"alert_settings"`
-	Database      DatabaseConfig    `json:"database"`
-	SRTP          SRTPConfig        `json:"srtp"`
+	Version       string              `json:"version"`
+	LastUpdated   time.Time           `json:"last_updated"`
+	Environment   string              `json:"environment"` // prod, staging, dev
+	Transport     TransportConfig     `json:"transport"`
+	RTPSettings   RTPSettings         `json:"rtp_settings"`
+	WebRTC        WebRTCConfig        `json:"webrtc"`
+	Integration   IntegrationConfig   `json:"integration"`
+	AlertSettings AlertSettings       `json:"alert_settings"`
+	Database      DatabaseConfig      `json:"database"`
+	SRTP          SRTPConfig          `json:"srtp"`
+	NGProtocol    *NGProtocolConfig   `json:"ng_protocol"`
+	Recording     *RecordingConfig    `json:"recording"`
+	API           *APIConfig          `json:"api"`
+	Sessions      *SessionConfig      `json:"sessions"`
+	JitterBuffer  *JitterBufferConfig `json:"jitter_buffer"`
+	RTCP          *RTCPConfig         `json:"rtcp"`
+	FEC           *FECConfig          `json:"fec"`
+}
+
+// GetNGProtocolConfig returns NG protocol config with defaults
+func (c *Config) GetNGProtocolConfig() *NGProtocolConfig {
+	if c.NGProtocol == nil {
+		return &NGProtocolConfig{
+			Enabled:    true,
+			SocketPath: "/var/run/karl/karl.sock",
+			Timeout:    30,
+		}
+	}
+	return c.NGProtocol
+}
+
+// GetRecordingConfig returns recording config with defaults
+func (c *Config) GetRecordingConfig() *RecordingConfig {
+	if c.Recording == nil {
+		return &RecordingConfig{
+			Enabled:       false,
+			BasePath:      "/var/lib/karl/recordings",
+			Format:        "wav",
+			Mode:          "mixed",
+			SampleRate:    8000,
+			BitsPerSample: 16,
+			MaxFileSize:   100 * 1024 * 1024, // 100MB
+			RetentionDays: 30,
+		}
+	}
+	return c.Recording
+}
+
+// GetAPIConfig returns API config with defaults
+func (c *Config) GetAPIConfig() *APIConfig {
+	if c.API == nil {
+		return &APIConfig{
+			Enabled:         true,
+			Address:         ":8080",
+			AuthEnabled:     false,
+			RateLimitPerMin: 60,
+		}
+	}
+	return c.API
+}
+
+// GetSessionConfig returns session config with defaults
+func (c *Config) GetSessionConfig() *SessionConfig {
+	if c.Sessions == nil {
+		return &SessionConfig{
+			MaxSessions:     10000,
+			SessionTTL:      3600,
+			CleanupInterval: 60,
+			MinPort:         30000,
+			MaxPort:         40000,
+		}
+	}
+	return c.Sessions
+}
+
+// GetJitterBufferConfig returns jitter buffer config with defaults
+func (c *Config) GetJitterBufferConfig() *JitterBufferConfig {
+	if c.JitterBuffer == nil {
+		return &JitterBufferConfig{
+			Enabled:      true,
+			MinDelay:     20,
+			MaxDelay:     200,
+			TargetDelay:  50,
+			AdaptiveMode: true,
+			MaxSize:      100,
+		}
+	}
+	return c.JitterBuffer
+}
+
+// GetRTCPConfig returns RTCP config with defaults
+func (c *Config) GetRTCPConfig() *RTCPConfig {
+	if c.RTCP == nil {
+		return &RTCPConfig{
+			Enabled:     true,
+			Interval:    5,
+			ReducedSize: false,
+			MuxEnabled:  true,
+		}
+	}
+	return c.RTCP
+}
+
+// GetFECConfig returns FEC config with defaults
+func (c *Config) GetFECConfig() *FECConfig {
+	if c.FEC == nil {
+		return &FECConfig{
+			Enabled:       true,
+			BlockSize:     48,
+			Redundancy:    0.30,
+			AdaptiveMode:  true,
+			MaxRedundancy: 0.50,
+			MinRedundancy: 0.10,
+		}
+	}
+	return c.FEC
 }
