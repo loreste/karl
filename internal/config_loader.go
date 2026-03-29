@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -37,6 +38,9 @@ func LoadConfig(filePath string) (*Config, error) {
 	if err := ValidateConfig(&newConfig); err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
+
+	// Apply environment variable overrides
+	ApplyEnvironmentOverrides(&newConfig)
 
 	if newConfig.Integration.PublicIP == "" {
 		detectedIP, err := GetPublicIP()
@@ -308,4 +312,96 @@ func GetLocalIP() string {
 	}
 
 	return ""
+}
+
+// ApplyEnvironmentOverrides applies environment variable overrides to the config
+// Environment variables take precedence over config file values
+func ApplyEnvironmentOverrides(cfg *Config) {
+	// NG Protocol settings
+	if port := os.Getenv("KARL_NG_PORT"); port != "" {
+		if p, err := strconv.Atoi(port); err == nil {
+			cfg.NGProtocol.UDPPort = p
+			log.Printf("NG Protocol port overridden by KARL_NG_PORT: %d", p)
+		}
+	}
+
+	// Session settings
+	if minPort := os.Getenv("KARL_RTP_MIN_PORT"); minPort != "" {
+		if p, err := strconv.Atoi(minPort); err == nil {
+			cfg.Sessions.MinPort = p
+			log.Printf("RTP min port overridden by KARL_RTP_MIN_PORT: %d", p)
+		}
+	}
+	if maxPort := os.Getenv("KARL_RTP_MAX_PORT"); maxPort != "" {
+		if p, err := strconv.Atoi(maxPort); err == nil {
+			cfg.Sessions.MaxPort = p
+			log.Printf("RTP max port overridden by KARL_RTP_MAX_PORT: %d", p)
+		}
+	}
+	if maxSessions := os.Getenv("KARL_MAX_SESSIONS"); maxSessions != "" {
+		if s, err := strconv.Atoi(maxSessions); err == nil {
+			cfg.Sessions.MaxSessions = s
+			log.Printf("Max sessions overridden by KARL_MAX_SESSIONS: %d", s)
+		}
+	}
+
+	// Recording settings
+	if recordingPath := os.Getenv("KARL_RECORDING_PATH"); recordingPath != "" {
+		cfg.Recording.BasePath = recordingPath
+		log.Printf("Recording path overridden by KARL_RECORDING_PATH: %s", recordingPath)
+	}
+	if recordingEnabled := os.Getenv("KARL_RECORDING_ENABLED"); recordingEnabled != "" {
+		cfg.Recording.Enabled = recordingEnabled == "true" || recordingEnabled == "1"
+		log.Printf("Recording enabled overridden by KARL_RECORDING_ENABLED: %v", cfg.Recording.Enabled)
+	}
+
+	// Database settings
+	if mysqlDSN := os.Getenv("KARL_MYSQL_DSN"); mysqlDSN != "" {
+		cfg.Database.MySQLDSN = mysqlDSN
+		log.Printf("MySQL DSN overridden by KARL_MYSQL_DSN")
+	}
+	if redisAddr := os.Getenv("KARL_REDIS_ADDR"); redisAddr != "" {
+		cfg.Database.RedisAddr = redisAddr
+		log.Printf("Redis address overridden by KARL_REDIS_ADDR: %s", redisAddr)
+	}
+	if redisEnabled := os.Getenv("KARL_REDIS_ENABLED"); redisEnabled != "" {
+		cfg.Database.RedisEnabled = redisEnabled == "true" || redisEnabled == "1"
+		log.Printf("Redis enabled overridden by KARL_REDIS_ENABLED: %v", cfg.Database.RedisEnabled)
+	}
+
+	// Integration settings
+	if mediaIP := os.Getenv("KARL_MEDIA_IP"); mediaIP != "" {
+		cfg.Integration.MediaIP = mediaIP
+		log.Printf("Media IP overridden by KARL_MEDIA_IP: %s", mediaIP)
+	}
+	if publicIP := os.Getenv("KARL_PUBLIC_IP"); publicIP != "" {
+		cfg.Integration.PublicIP = publicIP
+		log.Printf("Public IP overridden by KARL_PUBLIC_IP: %s", publicIP)
+	}
+
+	// API settings
+	if apiEnabled := os.Getenv("KARL_API_ENABLED"); apiEnabled != "" {
+		cfg.API.Enabled = apiEnabled == "true" || apiEnabled == "1"
+		log.Printf("API enabled overridden by KARL_API_ENABLED: %v", cfg.API.Enabled)
+	}
+	if apiAuth := os.Getenv("KARL_API_AUTH_ENABLED"); apiAuth != "" {
+		cfg.API.AuthEnabled = apiAuth == "true" || apiAuth == "1"
+		log.Printf("API auth enabled overridden by KARL_API_AUTH_ENABLED: %v", cfg.API.AuthEnabled)
+	}
+
+	// Transport settings
+	if udpPort := os.Getenv("KARL_UDP_PORT"); udpPort != "" {
+		if p, err := strconv.Atoi(udpPort); err == nil {
+			cfg.Transport.UDPPort = p
+			log.Printf("UDP port overridden by KARL_UDP_PORT: %d", p)
+		}
+	}
+}
+
+// GetConfigPath returns the config file path from environment or default
+func GetConfigPath() string {
+	if path := os.Getenv("KARL_CONFIG_PATH"); path != "" {
+		return path
+	}
+	return "config/config.json"
 }

@@ -9,11 +9,15 @@ import (
 
 // loadConfig loads and initializes the configuration
 func (k *KarlServer) loadConfig() error {
-	log.Println("🛠 Loading configuration...")
+	log.Println("Loading configuration...")
 
-	config, err := internal.LoadConfig("config/config.json")
+	// Get config path from environment or use default
+	configPath := internal.GetConfigPath()
+	log.Printf("Using config file: %s", configPath)
+
+	config, err := internal.LoadConfig(configPath)
 	if err != nil {
-		return fmt.Errorf("❌ Failed to load configuration: %w", err)
+		return fmt.Errorf("failed to load configuration: %w", err)
 	}
 
 	k.mu.Lock()
@@ -21,9 +25,9 @@ func (k *KarlServer) loadConfig() error {
 	k.mu.Unlock()
 
 	// Start config watcher
-	go func() { _ = internal.WatchConfig("config/config.json") }()
+	go func() { _ = internal.WatchConfig(configPath) }()
 
-	log.Println("✅ Configuration loaded successfully")
+	log.Println("Configuration loaded successfully")
 
 	// Ensure Unix Socket Listener is started here
 	k.startUnixSocketListener()
@@ -41,9 +45,9 @@ func (k *KarlServer) startUnixSocketListener() {
 
 	k.rtpSocket = internal.NewRTPengineSocketListener(socketPath)
 	if err := k.rtpSocket.Start(); err != nil {
-		log.Printf("❌ Failed to start Unix socket listener: %v", err)
+		log.Printf("Failed to start Unix socket listener: %v", err)
 		return
 	}
 
-	log.Printf("✅ Unix socket listener started on %s", socketPath)
+	log.Printf("Unix socket listener started on %s", socketPath)
 }

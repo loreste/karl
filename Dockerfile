@@ -58,14 +58,17 @@ EXPOSE 9091/tcp
 # Legacy RTP port
 EXPOSE 12000/udp
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:8086/health || exit 1
+# Health check using the liveness endpoint
+HEALTHCHECK --interval=30s --timeout=3s --start-period=15s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:8086/live || exit 1
 
-# Set environment variables
+# Set environment variables with sensible defaults
 ENV KARL_CONFIG_PATH=/etc/karl/config.json
 ENV KARL_LOG_LEVEL=info
+ENV KARL_RUN_DIR=/var/run/karl
+ENV KARL_HEALTH_PORT=:8086
+ENV KARL_METRICS_PORT=:9091
+ENV KARL_API_PORT=:8080
 
 # Run the application
 ENTRYPOINT ["/usr/local/bin/karl"]
-CMD ["-config", "/etc/karl/config.json"]

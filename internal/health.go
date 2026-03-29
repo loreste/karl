@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 )
@@ -266,4 +267,177 @@ func CheckSIPRegistration() ComponentHealth {
 func RegisterDefaultHealthChecks() {
 	RegisterHealthCheck("rtp", CheckRTPService)
 	RegisterHealthCheck("sip", CheckSIPRegistration)
+}
+
+// ReadinessState tracks the readiness of the application
+type ReadinessState struct {
+	Ready           bool
+	DatabaseReady   bool
+	RedisReady      bool
+	NGListenerReady bool
+	Message         string
+}
+
+var (
+	readinessState ReadinessState
+	readinessMu    sync.RWMutex
+
+	// Dependency checkers - set by main application
+	DatabaseChecker   func() bool
+	RedisChecker      func() bool
+	NGListenerChecker func() bool
+)
+
+// SetReadinessState updates the readiness state
+func SetReadinessState(ready bool, message string) {
+	readinessMu.Lock()
+	defer readinessMu.Unlock()
+	readinessState.Ready = ready
+	readinessState.Message = message
+}
+
+// SetDatabaseReady updates database readiness
+func SetDatabaseReady(ready bool) {
+	readinessMu.Lock()
+	defer readinessMu.Unlock()
+	readinessState.DatabaseReady = ready
+}
+
+// SetRedisReady updates redis readiness
+func SetRedisReady(ready bool) {
+	readinessMu.Lock()
+	defer readinessMu.Unlock()
+	readinessState.RedisReady = ready
+}
+
+// SetNGListenerReady updates NG listener readiness
+func SetNGListenerReady(ready bool) {
+	readinessMu.Lock()
+	defer readinessMu.Unlock()
+	readinessState.NGListenerReady = ready
+}
+
+// LivenessHandler returns a handler for Kubernetes liveness probes
+// Liveness checks if the process is running and not deadlocked
+func LivenessHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		// For liveness, we just need to verify the process can respond
+		// Check if we're not in a deadlock or crash state
+		healthMutex.RLock()
+		status := systemHealth.Status
+		healthMutex.RUnlock()
+
+		if status == StatusDown {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"status":"DOWN","message":"Service is unhealthy"}`))
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"UP","message":"Service is alive"}`))
+	}
+}
+
+// ReadinessHandler returns a handler for Kubernetes readiness probes
+// Readiness checks if the service is ready to accept traffic
+func ReadinessHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		// Check all critical dependencies
+		readinessMu.RLock()
+		state := readinessState
+		readinessMu.RUnlock()
+
+		// Run dynamic checks if checkers are configured
+		if DatabaseChecker != nil {
+			state.DatabaseReady = DatabaseChecker()
+		}
+		if RedisChecker != nil {
+			state.RedisReady = RedisChecker()
+		}
+		if NGListenerChecker != nil {
+			state.NGListenerReady = NGListenerChecker()
+		}
+
+		// Build response
+		response := map[string]interface{}{
+			"ready": state.Ready,
+			"checks": map[string]bool{
+				"database":   state.DatabaseReady,
+				"redis":      state.RedisReady,
+				"nglistener": state.NGListenerReady,
+			},
+		}
+
+		// Determine overall readiness
+		// Note: Redis and Database are optional, so we don't fail if they're not configured
+		isReady := state.Ready && state.NGListenerReady
+
+		if !isReady {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			response["message"] = "Service is not ready to accept traffic"
+		} else {
+			w.WriteHeader(http.StatusOK)
+			response["message"] = "Service is ready"
+		}
+
+		_ = json.NewEncoder(w).Encode(response)
+	}
+}
+
+// StartupHandler returns a handler for Kubernetes startup probes
+// Startup checks if the application has finished initialization
+func StartupHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		readinessMu.RLock()
+		ready := readinessState.Ready
+		message := readinessState.Message
+		readinessMu.RUnlock()
+
+		if !ready {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			response := map[string]interface{}{
+				"started": false,
+				"message": message,
+			}
+			_ = json.NewEncoder(w).Encode(response)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		response := map[string]interface{}{
+			"started": true,
+			"message": "Application has started successfully",
+		}
+		_ = json.NewEncoder(w).Encode(response)
+	}
+}
+
+// GetHealthPort returns the health check port from environment or default
+func GetHealthPort() string {
+	if port := os.Getenv("KARL_HEALTH_PORT"); port != "" {
+		return port
+	}
+	return ":8086"
+}
+
+// GetMetricsPort returns the metrics port from environment or default
+func GetMetricsPort() string {
+	if port := os.Getenv("KARL_METRICS_PORT"); port != "" {
+		return port
+	}
+	return ":9091"
+}
+
+// GetAPIPort returns the API port from environment or default
+func GetAPIPort() string {
+	if port := os.Getenv("KARL_API_PORT"); port != "" {
+		return port
+	}
+	return ":8080"
 }

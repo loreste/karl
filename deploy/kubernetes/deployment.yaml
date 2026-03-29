@@ -48,6 +48,22 @@ spec:
           value: "info"
         - name: KARL_CONFIG_PATH
           value: "/etc/karl/config.json"
+        - name: KARL_RUN_DIR
+          value: "/var/run/karl"
+        - name: KARL_HEALTH_PORT
+          value: ":8086"
+        - name: KARL_METRICS_PORT
+          value: ":9091"
+        - name: KARL_API_PORT
+          value: ":8080"
+        # Optional: Override config values via environment
+        # - name: KARL_MYSQL_DSN
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: karl-secrets
+        #       key: mysql-dsn
+        # - name: KARL_REDIS_ADDR
+        #   value: "redis:6379"
 
         volumeMounts:
         - name: config
@@ -55,24 +71,37 @@ spec:
           readOnly: true
         - name: recordings
           mountPath: /var/lib/karl/recordings
+        - name: run
+          mountPath: /var/run/karl
 
-        livenessProbe:
+        # Startup probe - allows slow startup before liveness kicks in
+        startupProbe:
           httpGet:
-            path: /health
-            port: 8086
-          initialDelaySeconds: 10
-          periodSeconds: 15
-          timeoutSeconds: 5
-          failureThreshold: 3
-
-        readinessProbe:
-          httpGet:
-            path: /health
+            path: /startup
             port: 8086
           initialDelaySeconds: 5
           periodSeconds: 5
           timeoutSeconds: 3
+          failureThreshold: 30  # 5s * 30 = 150s max startup time
+
+        # Liveness probe - restart if process is deadlocked
+        livenessProbe:
+          httpGet:
+            path: /live
+            port: 8086
+          periodSeconds: 15
+          timeoutSeconds: 5
           failureThreshold: 3
+
+        # Readiness probe - remove from service if not ready to accept traffic
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8086
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+          successThreshold: 1
 
         resources:
           requests:
@@ -98,6 +127,8 @@ spec:
       - name: recordings
         persistentVolumeClaim:
           claimName: karl-recordings
+      - name: run
+        emptyDir: {}
 
       # Prefer scheduling on nodes with low latency
       affinity:

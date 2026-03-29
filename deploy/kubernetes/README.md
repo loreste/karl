@@ -71,8 +71,45 @@ kubectl apply -f servicemonitor.yaml
 
 ### Health Checks
 
-- Liveness: `http://<pod-ip>:8086/health`
-- Readiness: `http://<pod-ip>:8086/health`
+Karl exposes Kubernetes-native probe endpoints:
+
+| Probe | Endpoint | Purpose |
+|-------|----------|---------|
+| Startup | `/startup` | Wait for application initialization |
+| Liveness | `/live` | Detect deadlocks, restart if needed |
+| Readiness | `/ready` | Check if ready to accept traffic |
+| Health | `/health` | Simple health status |
+| Health Detail | `/health/detail` | Detailed component health |
+
+**Probe behavior:**
+- Startup probe allows up to 150s for initialization
+- Liveness probe restarts pod if 3 consecutive checks fail
+- Readiness probe removes pod from service if not ready
+
+### Environment Variables
+
+Karl supports configuration via environment variables:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `KARL_CONFIG_PATH` | Config file path | `config/config.json` |
+| `KARL_HEALTH_PORT` | Health check port | `:8086` |
+| `KARL_METRICS_PORT` | Prometheus metrics port | `:9091` |
+| `KARL_API_PORT` | REST API port | `:8080` |
+| `KARL_RUN_DIR` | Runtime directory | `./run/karl` |
+| `KARL_NG_PORT` | NG protocol UDP port | (from config) |
+| `KARL_RTP_MIN_PORT` | RTP port range start | `30000` |
+| `KARL_RTP_MAX_PORT` | RTP port range end | `40000` |
+| `KARL_MAX_SESSIONS` | Max concurrent sessions | `10000` |
+| `KARL_RECORDING_PATH` | Recording storage path | `/var/lib/karl/recordings` |
+| `KARL_RECORDING_ENABLED` | Enable recording | (from config) |
+| `KARL_MYSQL_DSN` | MySQL connection string | (from config) |
+| `KARL_REDIS_ADDR` | Redis address | (from config) |
+| `KARL_REDIS_ENABLED` | Enable Redis | (from config) |
+| `KARL_MEDIA_IP` | Media IP address | `auto` |
+| `KARL_PUBLIC_IP` | Public IP address | (auto-detected) |
+
+Environment variables override config file values.
 
 ## Scaling
 

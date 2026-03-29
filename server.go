@@ -64,14 +64,15 @@ func (k *KarlServer) Start() error {
 	// Set up signal handling
 	k.setupSignalHandler()
 
-	// Initialize metrics
+	// Initialize metrics with configurable port
 	internal.InitMetrics()
 	mux := internal.SetupRoutes()
-	err := internal.StartMetricsServer(":9091", mux)
+	metricsPort := internal.GetMetricsPort()
+	err := internal.StartMetricsServer(metricsPort, mux)
 	if err != nil {
-		log.Printf("❌ Failed to start metrics server: %v", err)
+		log.Printf("Failed to start metrics server: %v", err)
 	} else {
-		log.Println("✅ Metrics initialized and server started")
+		log.Printf("Metrics server started on %s", metricsPort)
 	}
 
 	// Connect worker pool metrics to media handler
@@ -93,13 +94,23 @@ func (k *KarlServer) Start() error {
 	startHealthAPI := func() {
 		mux := http.NewServeMux()
 
-		// Register health check endpoints
+		// Register health check endpoints (Kubernetes-compatible)
 		mux.HandleFunc("/health", internal.SimpleHealthHandler())
 		mux.HandleFunc("/health/detail", internal.HealthHandler())
 
+		// Kubernetes probe endpoints
+		mux.HandleFunc("/live", internal.LivenessHandler())
+		mux.HandleFunc("/livez", internal.LivenessHandler())
+		mux.HandleFunc("/ready", internal.ReadinessHandler())
+		mux.HandleFunc("/readyz", internal.ReadinessHandler())
+		mux.HandleFunc("/startup", internal.StartupHandler())
+
+		// Get health port from environment or use default
+		healthPort := internal.GetHealthPort()
+
 		// Create health server with proper timeouts
 		k.healthServer = &http.Server{
-			Addr:         ":8086",
+			Addr:         healthPort,
 			Handler:      mux,
 			ReadTimeout:  5 * time.Second,
 			WriteTimeout: 10 * time.Second,
@@ -108,9 +119,9 @@ func (k *KarlServer) Start() error {
 
 		// Start server in a goroutine
 		go func() {
-			log.Printf("🩺 Starting health check server on %s", k.healthServer.Addr)
+			log.Printf("Starting health check server on %s", k.healthServer.Addr)
 			if err := k.healthServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				log.Printf("❌ Health check server error: %v", err)
+				log.Printf("Health check server error: %v", err)
 			}
 		}()
 
@@ -119,12 +130,18 @@ func (k *KarlServer) Start() error {
 	}
 	startHealthAPI()
 
+	// Set up dependency health checkers for Kubernetes readiness
+	k.setupHealthCheckers()
+
 	// Note: loadConfig() already starts the API server and Unix socket listener
 	// SIP registration is initialized in initializeServices()
 
+	// Mark server as ready for Kubernetes probes
+	k.MarkReady()
+
 	// Record startup time
 	startupDuration := time.Since(startTime)
-	log.Printf("✅ Karl RTP Engine started successfully in %s", startupDuration)
+	log.Printf("Karl RTP Engine started successfully in %s", startupDuration)
 
 	return nil
 }
@@ -278,4 +295,73 @@ func (k *KarlServer) AddWorker() {
 // WorkerDone marks a worker as done
 func (k *KarlServer) WorkerDone() {
 	k.wg.Done()
+}
+
+// setupHealthCheckers configures the health dependency checkers for Kubernetes probes
+func (k *KarlServer) setupHealthCheckers() {
+	// Database health checker
+	internal.DatabaseChecker = func() bool {
+		k.mu.RLock()
+		db := k.database
+		k.mu.RUnlock()
+
+		if db == nil {
+			// Database not configured - this is OK
+			return true
+		}
+
+		// Try to ping the database
+		if db.GetDB() != nil {
+			return db.GetDB().Ping() == nil
+		}
+		return false
+	}
+
+	// Redis health checker
+	internal.RedisChecker = func() bool {
+		k.mu.RLock()
+		redis := k.redisCache
+		k.mu.RUnlock()
+
+		if redis == nil || !redis.Enabled {
+			// Redis not configured - this is OK
+			return true
+		}
+
+		// Try to ping Redis
+		return redis.Client.Ping(redis.Ctx).Err() == nil
+	}
+
+	// NG Listener health checker
+	internal.NGListenerChecker = func() bool {
+		k.mu.RLock()
+		listener := k.ngListener
+		k.mu.RUnlock()
+
+		// NG Listener should be running for readiness
+		return listener != nil
+	}
+
+	// Mark initial readiness state
+	internal.SetReadinessState(false, "Initializing services")
+}
+
+// MarkReady marks the server as ready to accept traffic
+func (k *KarlServer) MarkReady() {
+	internal.SetReadinessState(true, "All services initialized")
+	internal.SetNGListenerReady(k.ngListener != nil)
+
+	// Check database
+	if k.database != nil {
+		internal.SetDatabaseReady(k.database.GetDB().Ping() == nil)
+	} else {
+		internal.SetDatabaseReady(true) // Not configured = OK
+	}
+
+	// Check Redis
+	if k.redisCache != nil && k.redisCache.Enabled {
+		internal.SetRedisReady(k.redisCache.Client.Ping(k.redisCache.Ctx).Err() == nil)
+	} else {
+		internal.SetRedisReady(true) // Not configured = OK
+	}
 }
