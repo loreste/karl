@@ -23,6 +23,7 @@ Karl is a high-performance, cloud-native RTP media proxy and media server writte
 - [Why Choose Karl](#why-choose-karl)
 - [Features](#features)
 - [Quick Start](#quick-start)
+- [Documentation](#documentation)
 - [Installation](#installation)
 - [Configuration](#configuration)
 - [Kubernetes Deployment](#kubernetes-deployment)
@@ -215,6 +216,39 @@ Karl is now listening on:
 # Ping test
 echo -n "d7:command4:pinge" | nc -u localhost 22222
 ```
+
+---
+
+## Documentation
+
+Comprehensive documentation is available in the [`docs/`](./docs) directory.
+
+### Getting Started
+
+- [Quick Start Guide](./docs/getting-started.md) - Get running in 5 minutes
+- [Installation Guide](./docs/installation.md) - Detailed installation options
+- [Configuration Reference](./docs/configuration.md) - All configuration options
+
+### How-To Guides
+
+Step-by-step guides for common tasks:
+
+| Guide | Description |
+|-------|-------------|
+| [Deploy on Kubernetes](./docs/how-to/deploying-kubernetes.md) | Production K8s deployment with probes, scaling, and monitoring |
+| [Integrate with OpenSIPS](./docs/how-to/integrating-opensips.md) | Connect Karl to OpenSIPS with NAT, WebRTC, and recording |
+| [Integrate with Kamailio](./docs/how-to/integrating-kamailio.md) | Connect Karl to Kamailio with complete examples |
+| [Set Up Call Recording](./docs/how-to/setting-up-recording.md) | Configure recording modes, storage, and retention |
+| [Monitor with Prometheus](./docs/how-to/monitoring-prometheus.md) | Metrics, Grafana dashboards, and alerting rules |
+| [Scale Horizontally](./docs/how-to/scaling-horizontally.md) | Redis clustering and load balancing |
+| [Bridge WebRTC to SIP](./docs/how-to/webrtc-sip-bridging.md) | Connect browser clients to SIP infrastructure |
+| [Secure with TLS](./docs/how-to/securing-with-tls.md) | HTTPS for API and management interfaces |
+| [Troubleshooting](./docs/how-to/troubleshooting.md) | Diagnose and fix common issues |
+
+### Reference
+
+- [NG Protocol Reference](./docs/reference/ng-protocol.md) - Complete protocol specification
+- [Environment Variables](./docs/reference/environment-variables.md) - All supported variables
 
 ---
 
@@ -699,7 +733,8 @@ Karl builds on the work of the open-source community:
 
 ## Support
 
-- **Documentation**: [Full documentation](./DOCUMENTATION.md)
+- **Documentation**: [Full documentation](./docs/README.md)
+- **How-To Guides**: [Step-by-step guides](./docs/how-to)
 - **Issues**: [GitHub Issues](https://github.com/loreste/karl/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/loreste/karl/discussions)
 
