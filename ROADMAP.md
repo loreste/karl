@@ -19,14 +19,14 @@ Karl already provides:
 
 | Gap | Priority | Status |
 |-----|----------|--------|
-| Complete NG protocol behavioral parity | Critical | In Progress |
-| SIPREC recording integration | High | Not Started |
-| T.38 fax passthrough | High | Not Started |
-| Multi-node clustering with failover | High | Not Started |
-| NAT/interface logic parity | Critical | Partial |
-| IPv4↔IPv6 bridging | Medium | Not Started |
-| Performance isolation (fast path) | Medium | Not Started |
-| Full SDP edge case handling | Medium | Partial |
+| Complete NG protocol behavioral parity | Critical | ✅ Complete |
+| SIPREC recording integration | High | ✅ Complete |
+| T.38 fax passthrough | High | ✅ Complete |
+| Multi-node clustering with failover | High | ✅ Complete |
+| NAT/interface logic parity | Critical | ✅ Complete |
+| IPv4↔IPv6 bridging | Medium | ✅ Complete |
+| Performance isolation (fast path) | Medium | In Progress |
+| Full SDP edge case handling | Medium | ✅ Complete |
 
 ---
 
@@ -97,122 +97,122 @@ Karl already provides:
 Implement all rtpengine NG protocol flags and options:
 
 #### Session/Call Control Flags
-- [ ] `call-id` - Call identifier (exists)
-- [ ] `from-tag` - From leg tag (exists)
-- [ ] `to-tag` - To leg tag (exists)
-- [ ] `via-branch` - Via branch for forking
-- [ ] `label` - Arbitrary label for leg identification
-- [ ] `set-label` - Set/change label
-- [ ] `from-label` - Reference by label
-- [ ] `to-label` - Reference by label
-- [ ] `all` - Apply to all legs
-- [ ] `flags` - Generic flags passthrough
+- [x] `call-id` - Call identifier (exists)
+- [x] `from-tag` - From leg tag (exists)
+- [x] `to-tag` - To leg tag (exists)
+- [x] `via-branch` - Via branch for forking
+- [x] `label` - Arbitrary label for leg identification
+- [x] `set-label` - Set/change label
+- [x] `from-label` - Reference by label
+- [x] `to-label` - Reference by label
+- [x] `all` - Apply to all legs
+- [x] `flags` - Generic flags passthrough
 
 #### Interface Selection
-- [ ] `direction` - Caller/callee direction hints
-- [ ] `interface` - Select named interface
-- [ ] `from-interface` - Interface for from-leg
-- [ ] `to-interface` - Interface for to-leg
-- [ ] `received-from` - Override received address
-- [ ] `media-address` - Override media address
-- [ ] `address-family` - IPv4/IPv6 selection
+- [x] `direction` - Caller/callee direction hints
+- [x] `interface` - Select named interface
+- [x] `from-interface` - Interface for from-leg
+- [x] `to-interface` - Interface for to-leg
+- [x] `received-from` - Override received address
+- [x] `media-address` - Override media address
+- [x] `address-family` - IPv4/IPv6 selection
 
 #### ICE Handling
-- [ ] `ICE=remove` - Strip ICE (exists)
-- [ ] `ICE=force` - Force ICE (exists)
-- [ ] `ICE=force-relay` - Force TURN relay
-- [ ] `ICE=default` - Default behavior
-- [ ] `ICE-lite` - ICE-lite mode
-- [ ] `unidirectional` - Unidirectional ICE
-- [ ] `trickle-ice` - Trickle ICE support
-- [ ] `generate-mid` - Generate MID attributes
+- [x] `ICE=remove` - Strip ICE (exists)
+- [x] `ICE=force` - Force ICE (exists)
+- [x] `ICE=force-relay` - Force TURN relay
+- [x] `ICE=default` - Default behavior
+- [x] `ICE-lite` - ICE-lite mode
+- [x] `unidirectional` - Unidirectional ICE
+- [x] `trickle-ice` - Trickle ICE support
+- [x] `generate-mid` - Generate MID attributes
 
 #### DTLS/SRTP Control
-- [ ] `DTLS=off` - Disable DTLS (exists)
-- [ ] `DTLS=passive` - DTLS passive (exists)
-- [ ] `DTLS=active` - DTLS active (exists)
-- [ ] `DTLS-reverse` - Reverse DTLS role
-- [ ] `DTLS-fingerprint` - Fingerprint handling
-- [ ] `SDES=off` - Disable SDES (exists)
-- [ ] `SDES=unencrypted_srtp` - Allow unencrypted
-- [ ] `SDES=unencrypted_srtcp` - Allow unencrypted SRTCP
-- [ ] `SDES=unauthenticated` - Unauthenticated SRTP
-- [ ] `SDES-only` - SDES only, no DTLS
-- [ ] `SDES-pad` - Pad SDES
-- [ ] `SDES-no` - Per-crypto SDES control
-- [ ] `transport-protocol` - Force transport
+- [x] `DTLS=off` - Disable DTLS (exists)
+- [x] `DTLS=passive` - DTLS passive (exists)
+- [x] `DTLS=active` - DTLS active (exists)
+- [x] `DTLS-reverse` - Reverse DTLS role
+- [x] `DTLS-fingerprint` - Fingerprint handling
+- [x] `SDES=off` - Disable SDES (exists)
+- [x] `SDES=unencrypted_srtp` - Allow unencrypted
+- [x] `SDES=unencrypted_srtcp` - Allow unencrypted SRTCP
+- [x] `SDES=unauthenticated` - Unauthenticated SRTP
+- [x] `SDES-only` - SDES only, no DTLS
+- [x] `SDES-pad` - Pad SDES
+- [x] `SDES-no` - Per-crypto SDES control
+- [x] `transport-protocol` - Force transport
 
 #### SDP Manipulation
-- [ ] `replace-origin` - Replace o= line (exists)
-- [ ] `replace-session-connection` - Replace c= line (exists)
-- [ ] `replace-sdp-version` - Replace version
-- [ ] `replace-username` - Replace username
-- [ ] `replace-session-name` - Replace session name
-- [ ] `trust-address` - Trust SDP addresses
-- [ ] `SIP-source-address` - Use SIP source (exists)
-- [ ] `symmetric` - Force symmetric RTP (exists)
-- [ ] `asymmetric` - Allow asymmetric
-- [ ] `port-latching` - Enable port latching
-- [ ] `no-port-latching` - Disable port latching
-- [ ] `media-handover` - Allow media handover
-- [ ] `reset` - Reset port latching
+- [x] `replace-origin` - Replace o= line (exists)
+- [x] `replace-session-connection` - Replace c= line (exists)
+- [x] `replace-sdp-version` - Replace version
+- [x] `replace-username` - Replace username
+- [x] `replace-session-name` - Replace session name
+- [x] `trust-address` - Trust SDP addresses
+- [x] `SIP-source-address` - Use SIP source (exists)
+- [x] `symmetric` - Force symmetric RTP (exists)
+- [x] `asymmetric` - Allow asymmetric
+- [x] `port-latching` - Enable port latching
+- [x] `no-port-latching` - Disable port latching
+- [x] `media-handover` - Allow media handover
+- [x] `reset` - Reset port latching
 
 #### Codec Control
-- [ ] `codec-strip` - Strip specific codecs
-- [ ] `codec-strip-all` - Strip all codecs (exists)
-- [ ] `codec-offer` - Offer specific codec (exists)
-- [ ] `codec-mask` - Mask codecs (exists)
-- [ ] `codec-set` - Set codec params
-- [ ] `codec-transcode` - Enable transcoding
-- [ ] `codec-except` - Exclude from operations
-- [ ] `ptime` - Packet time
-- [ ] `ptime-reverse` - Reverse ptime
-- [ ] `T38` - T.38 handling
-- [ ] `always-transcode` - Force transcoding
+- [x] `codec-strip` - Strip specific codecs
+- [x] `codec-strip-all` - Strip all codecs (exists)
+- [x] `codec-offer` - Offer specific codec (exists)
+- [x] `codec-mask` - Mask codecs (exists)
+- [x] `codec-set` - Set codec params
+- [x] `codec-transcode` - Enable transcoding
+- [x] `codec-except` - Exclude from operations
+- [x] `ptime` - Packet time
+- [x] `ptime-reverse` - Reverse ptime
+- [x] `T38` - T.38 handling
+- [x] `always-transcode` - Force transcoding
 
 #### RTP/RTCP Behavior
-- [ ] `RTP/AVP` - RTP profile (exists)
-- [ ] `RTP/SAVP` - SRTP profile (exists)
-- [ ] `RTP/AVPF` - AVPF profile (exists)
-- [ ] `RTP/SAVPF` - SAVPF profile (exists)
-- [ ] `strict-source` - Strict source validation
-- [ ] `media-echo` - Echo mode
-- [ ] `RTCP-mux` - RTCP mux control
-- [ ] `RTCP-mux-demux` - Demux RTCP
-- [ ] `RTCP-mux-accept` - Accept RTCP mux
-- [ ] `RTCP-mux-offer` - Offer RTCP mux
-- [ ] `RTCP-mux-require` - Require RTCP mux
-- [ ] `no-rtcp-attribute` - Remove RTCP attribute
-- [ ] `full-rtcp-attribute` - Full RTCP attribute
-- [ ] `generate-RTCP` - Generate RTCP
-- [ ] `loop-protect` - Loop protection
+- [x] `RTP/AVP` - RTP profile (exists)
+- [x] `RTP/SAVP` - SRTP profile (exists)
+- [x] `RTP/AVPF` - AVPF profile (exists)
+- [x] `RTP/SAVPF` - SAVPF profile (exists)
+- [x] `strict-source` - Strict source validation
+- [x] `media-echo` - Echo mode
+- [x] `RTCP-mux` - RTCP mux control
+- [x] `RTCP-mux-demux` - Demux RTCP
+- [x] `RTCP-mux-accept` - Accept RTCP mux
+- [x] `RTCP-mux-offer` - Offer RTCP mux
+- [x] `RTCP-mux-require` - Require RTCP mux
+- [x] `no-rtcp-attribute` - Remove RTCP attribute
+- [x] `full-rtcp-attribute` - Full RTCP attribute
+- [x] `generate-RTCP` - Generate RTCP
+- [x] `loop-protect` - Loop protection
 
 #### Recording Control
-- [ ] `record-call` - Enable recording (exists)
-- [ ] `start-recording` - Start recording
-- [ ] `stop-recording` - Stop recording
-- [ ] `pause-recording` - Pause recording
-- [ ] `recording-metadata` - Recording metadata
-- [ ] `recording-file` - Recording filename
-- [ ] `recording-path` - Recording path
-- [ ] `recording-pattern` - Filename pattern
-- [ ] `SIPREC` - SIPREC mode
+- [x] `record-call` - Enable recording (exists)
+- [x] `start-recording` - Start recording
+- [x] `stop-recording` - Stop recording
+- [x] `pause-recording` - Pause recording
+- [x] `recording-metadata` - Recording metadata
+- [x] `recording-file` - Recording filename
+- [x] `recording-path` - Recording path
+- [x] `recording-pattern` - Filename pattern
+- [x] `SIPREC` - SIPREC mode
 
 #### Media Control
-- [ ] `block-media` - Block media (exists)
-- [ ] `unblock-media` - Unblock media
-- [ ] `block-dtmf` - Block DTMF
-- [ ] `unblock-dtmf` - Unblock DTMF
-- [ ] `silence-media` - Silence instead of block
-- [ ] `inject-DTMF` - Inject DTMF (exists)
+- [x] `block-media` - Block media (exists)
+- [x] `unblock-media` - Unblock media
+- [x] `block-dtmf` - Block DTMF
+- [x] `unblock-dtmf` - Unblock DTMF
+- [x] `silence-media` - Silence instead of block
+- [x] `inject-DTMF` - Inject DTMF (exists)
 - [ ] `play-media` - Play media file
 - [ ] `stop-media` - Stop media playback
 
 #### Quality/Timeout
-- [ ] `media-timeout` - Media timeout
-- [ ] `session-timeout` - Session timeout
-- [ ] `TOS` - Set TOS/DSCP
-- [ ] `delete-delay` - Delay before delete
+- [x] `media-timeout` - Media timeout
+- [x] `session-timeout` - Session timeout
+- [x] `TOS` - Set TOS/DSCP
+- [x] `delete-delay` - Delay before delete
 - [ ] `delay-buffer` - Delay buffer config
 - [ ] `frequency` - RTCP interval
 
