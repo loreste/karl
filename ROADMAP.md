@@ -235,10 +235,10 @@ Beyond flag support, implement correct behavioral semantics:
 
 Ensure responses match rtpengine format exactly:
 
-- [ ] `query` response format with stats
-- [ ] `list` response format with call details
-- [ ] Error responses with correct reason strings
-- [ ] Statistics field names and units
+- [x] `query` response format with stats
+- [x] `list` response format with call details
+- [x] Error responses with correct reason strings
+- [x] Statistics field names and units
 
 ### 1.4 Testing
 
