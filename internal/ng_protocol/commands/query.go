@@ -29,9 +29,33 @@ func (h *QueryHandler) Handle(req *ng.NGRequest) (*ng.NGResponse, error) {
 		}, nil
 	}
 
+	// Parse flags for label support
+	flags := ng.ParseFlags(req.Flags)
+
 	// Find session by call-id and tags
 	var session *internal.MediaSession
-	if req.FromTag != "" {
+
+	// Try label-based lookup first
+	if flags.FromLabel != "" || flags.ToLabel != "" {
+		sessions := h.sessionRegistry.GetSessionByCallID(req.CallID)
+		for _, s := range sessions {
+			if flags.FromLabel != "" {
+				if leg := s.GetLegByLabel(flags.FromLabel); leg != nil {
+					session = s
+					break
+				}
+			}
+			if flags.ToLabel != "" {
+				if leg := s.GetLegByLabel(flags.ToLabel); leg != nil {
+					session = s
+					break
+				}
+			}
+		}
+	}
+
+	// Try tag-based lookup
+	if session == nil && req.FromTag != "" {
 		session = h.sessionRegistry.GetSessionByTags(req.CallID, req.FromTag, req.ToTag)
 	}
 
@@ -163,11 +187,47 @@ func (h *QueryHandler) Handle(req *ng.NGRequest) (*ng.NGResponse, error) {
 		}
 	}
 
-	// Add extra info
+	// Add extra info with rtpengine-compatible fields
 	response.Extra = map[string]interface{}{
 		"state":    string(session.State),
 		"flags":    session.Flags,
 		"metadata": session.Metadata,
+	}
+
+	// Add session-level rtpengine fields
+	if session.TOS >= 0 {
+		response.Extra["tos"] = session.TOS
+	}
+	if session.MediaTimeout >= 0 {
+		response.Extra["media-timeout"] = session.MediaTimeout
+	}
+	if session.SIPREC {
+		response.Extra["siprec"] = true
+	}
+	if session.T38Enabled {
+		response.Extra["t38"] = true
+	}
+	if session.ICELite {
+		response.Extra["ice-lite"] = true
+	}
+	if session.Recording != nil && session.Recording.Active {
+		response.Extra["recording"] = true
+		response.Extra["recording-file"] = session.Recording.FilePath
+	}
+
+	// Add labeled legs info
+	if len(session.Legs) > 0 {
+		labels := make(map[string]interface{})
+		for label, leg := range session.Legs {
+			labels[label] = map[string]interface{}{
+				"tag":        leg.Tag,
+				"interface":  leg.Interface,
+				"direction":  leg.Direction,
+				"local-ip":   leg.LocalIP.String(),
+				"local-port": leg.LocalPort,
+			}
+		}
+		response.Extra["labels"] = labels
 	}
 
 	return response, nil
