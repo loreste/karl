@@ -684,14 +684,29 @@ Karl is optimized for high-throughput media processing:
 
 ## Roadmap
 
-Planned features for future releases:
+Karl is on track to become a full rtpengine replacement. See the detailed [ROADMAP.md](./ROADMAP.md) for implementation plans.
 
+### Phase 1: Control-Plane Parity (In Progress)
+- [ ] Complete NG protocol flag support
+- [ ] Behavioral semantics parity
+- [ ] Response format compatibility
+
+### Phase 2: Relay-Grade Media
+- [ ] NAT/interface logic parity
+- [ ] IPv4↔IPv6 bridging
+- [ ] ICE-full and ICE-lite modes
+- [ ] Media fast path optimization
+
+### Phase 3: Enterprise Features
 - [ ] SIPREC recording integration
 - [ ] T.38 fax passthrough
-- [ ] SRTP-to-RTP gateway mode
-- [ ] Multi-node clustering with automatic failover
-- [ ] Web-based management interface
-- [ ] gRPC API
+- [ ] SRTP↔RTP gateway mode
+- [ ] Multi-node clustering with failover
+
+### Phase 4: Operational Maturity
+- [ ] Performance engineering
+- [ ] Chaos testing
+- [ ] Security hardening
 
 ---
 
