@@ -81,18 +81,27 @@ type WebRTCConfig struct {
 	RecordingPath    string       `json:"recording_path"`
 }
 
+// NetworkInterfaceConfig defines a named network interface for media
+type NetworkInterfaceConfig struct {
+	Name          string `json:"name"`
+	Address       string `json:"address"`
+	AdvertiseAddr string `json:"advertise_addr"`
+	Port          int    `json:"port"`
+}
+
 // IntegrationConfig defines SIP proxy settings
 type IntegrationConfig struct {
-	OpenSIPSIp        string `json:"opensips_ip"`
-	OpenSIPSPort      int    `json:"opensips_port"`
-	KamailioIp        string `json:"kamailio_ip"`
-	KamailioPort      int    `json:"kamailio_port"`
-	RTPengineSocket   string `json:"rtpengine_socket"`
-	MediaIP           string `json:"media_ip"`
-	PublicIP          string `json:"public_ip"`
-	BackupMediaIP     string `json:"backup_media_ip"`
-	FailoverEnabled   bool   `json:"failover_enabled"`
-	KeepAliveInterval int    `json:"keepalive_interval"`
+	OpenSIPSIp        string                             `json:"opensips_ip"`
+	OpenSIPSPort      int                                `json:"opensips_port"`
+	KamailioIp        string                             `json:"kamailio_ip"`
+	KamailioPort      int                                `json:"kamailio_port"`
+	RTPengineSocket   string                             `json:"rtpengine_socket"`
+	MediaIP           string                             `json:"media_ip"`
+	PublicIP          string                             `json:"public_ip"`
+	BackupMediaIP     string                             `json:"backup_media_ip"`
+	FailoverEnabled   bool                               `json:"failover_enabled"`
+	KeepAliveInterval int                                `json:"keepalive_interval"`
+	Interfaces        map[string]*NetworkInterfaceConfig `json:"interfaces"`
 }
 
 // AlertSettings defines monitoring thresholds

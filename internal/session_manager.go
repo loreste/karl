@@ -41,6 +41,7 @@ const (
 // CallLeg represents one side of a call (caller or callee)
 type CallLeg struct {
 	Tag           string
+	Label         string // rtpengine label for leg identification
 	IP            net.IP
 	Port          int
 	RTCPPort      int
@@ -62,6 +63,26 @@ type CallLeg struct {
 	BytesRecv     uint64
 	PacketsLost   uint32
 	Jitter        float64
+
+	// rtpengine compatible fields
+	Interface     string // Network interface name (internal/external)
+	AddressFamily string // inet or inet6
+	Direction     string // Direction: sendrecv, sendonly, recvonly, inactive
+
+	// Media control flags
+	Symmetric       bool // Force symmetric RTP
+	StrictSource    bool // Strict source checking
+	MediaHandover   bool // Allow media handover
+	PortLatching    bool // Port latching enabled
+
+	// Blocking
+	MediaBlocked  bool
+	DTMFBlocked   bool
+	Silenced      bool
+
+	// T.38
+	T38Enabled    bool
+	T38Gateway    bool
 }
 
 // ICECredentials holds ICE authentication credentials
@@ -132,6 +153,42 @@ type MediaSession struct {
 	Flags        map[string]bool
 	Metadata     map[string]string
 	mu           sync.RWMutex
+
+	// rtpengine-compatible session fields
+	Legs         map[string]*CallLeg // Label -> CallLeg mapping for multi-leg support
+	TOS          int                 // TOS/DSCP value (-1 = not set)
+	MediaTimeout int                 // Media inactivity timeout in seconds
+	DeleteDelay  int                 // Delay before delete in seconds
+
+	// SIPREC support
+	SIPREC          bool
+	SIPRECMeta      map[string]string
+
+	// Transcoding
+	TranscodeCodecs []string
+	AlwaysTranscode bool
+
+	// ICE session state
+	ICELite       bool
+	TrickleICE    bool
+	ICEForce      bool
+	ICERemove     bool
+
+	// DTLS session state
+	DTLSOff     bool
+	DTLSPassive bool
+	DTLSActive  bool
+
+	// SDES state
+	SDESOff  bool
+	SDESOnly bool
+
+	// T.38 session state
+	T38Enabled  bool
+	T38Gateway  bool
+
+	// Loop protection
+	LoopProtect bool
 }
 
 // SessionRecording holds recording state for a session
@@ -239,16 +296,21 @@ func (sr *SessionRegistry) CreateSession(callID, fromTag string) *MediaSession {
 	defer sr.mu.Unlock()
 
 	session := &MediaSession{
-		ID:        uuid.New().String(),
-		CallID:    callID,
-		FromTag:   fromTag,
-		State:     SessionStateNew,
-		SSRCToLeg: make(map[uint32]*CallLeg),
-		Stats:     &SessionStats{StartTime: time.Now()},
-		Flags:     make(map[string]bool),
-		Metadata:  make(map[string]string),
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		ID:           uuid.New().String(),
+		CallID:       callID,
+		FromTag:      fromTag,
+		State:        SessionStateNew,
+		SSRCToLeg:    make(map[uint32]*CallLeg),
+		Legs:         make(map[string]*CallLeg),
+		Stats:        &SessionStats{StartTime: time.Now()},
+		Flags:        make(map[string]bool),
+		Metadata:     make(map[string]string),
+		SIPRECMeta:   make(map[string]string),
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
+		TOS:          -1, // Not set
+		MediaTimeout: -1, // Not set
+		DeleteDelay:  -1, // Not set
 	}
 
 	sr.sessions[session.ID] = session
@@ -596,6 +658,71 @@ func (session *MediaSession) GetMetadata(key string) string {
 	session.mu.RLock()
 	defer session.mu.RUnlock()
 	return session.Metadata[key]
+}
+
+// GetLegByLabel retrieves a leg by its label
+func (session *MediaSession) GetLegByLabel(label string) *CallLeg {
+	session.mu.RLock()
+	defer session.mu.RUnlock()
+	return session.Legs[label]
+}
+
+// SetLegByLabel sets a leg with a specific label
+func (session *MediaSession) SetLegByLabel(label string, leg *CallLeg) {
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	leg.Label = label
+	session.Legs[label] = leg
+}
+
+// GetLegByTag retrieves a leg by its tag
+func (session *MediaSession) GetLegByTag(tag string) *CallLeg {
+	session.mu.RLock()
+	defer session.mu.RUnlock()
+	if session.CallerLeg != nil && session.CallerLeg.Tag == tag {
+		return session.CallerLeg
+	}
+	if session.CalleeLeg != nil && session.CalleeLeg.Tag == tag {
+		return session.CalleeLeg
+	}
+	// Check labeled legs
+	for _, leg := range session.Legs {
+		if leg.Tag == tag {
+			return leg
+		}
+	}
+	return nil
+}
+
+// ApplySessionFlags applies flags from ParsedFlags to the session
+func (session *MediaSession) ApplySessionFlags(tos, mediaTimeout, deleteDelay int, siprec, t38, t38Gateway, iceLite, trickleICE, iceForce, iceRemove, dtlsOff, dtlsPassive, dtlsActive, sdesOff, sdesOnly, loopProtect, alwaysTranscode bool) {
+	session.mu.Lock()
+	defer session.mu.Unlock()
+
+	if tos >= 0 {
+		session.TOS = tos
+	}
+	if mediaTimeout >= 0 {
+		session.MediaTimeout = mediaTimeout
+	}
+	if deleteDelay >= 0 {
+		session.DeleteDelay = deleteDelay
+	}
+
+	session.SIPREC = siprec
+	session.T38Enabled = t38
+	session.T38Gateway = t38Gateway
+	session.ICELite = iceLite
+	session.TrickleICE = trickleICE
+	session.ICEForce = iceForce
+	session.ICERemove = iceRemove
+	session.DTLSOff = dtlsOff
+	session.DTLSPassive = dtlsPassive
+	session.DTLSActive = dtlsActive
+	session.SDESOff = sdesOff
+	session.SDESOnly = sdesOnly
+	session.LoopProtect = loopProtect
+	session.AlwaysTranscode = alwaysTranscode
 }
 
 // Stop stops the session registry

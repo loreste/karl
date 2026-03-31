@@ -15,12 +15,15 @@ type ParsedSDP struct {
 	SessionVersion int64
 	SessionName    string
 	ConnectionIP   string
+	OriginUsername string
 
 	// Media level
 	MediaType    string
 	MediaPort    int
 	Protocol     string
 	Codecs       []CodecInfo
+	Ptime        int  // Packet time from SDP
+	HasAVPF      bool // Whether protocol includes AVPF feedback
 
 	// ICE
 	HasICE   bool
@@ -43,6 +46,7 @@ type ParsedSDP struct {
 	RTCPMux   bool
 	RTCPPort  int
 	SSRC      uint32
+	MID       string // Media ID for bundle
 }
 
 // CodecInfo holds codec information from SDP
@@ -91,6 +95,9 @@ func (p *SDPProcessorImpl) Parse(sdp string) (*ParsedSDP, error) {
 		case 'o':
 			// o=<username> <sess-id> <sess-version> <nettype> <addrtype> <unicast-address>
 			parts := strings.Fields(value)
+			if len(parts) >= 1 {
+				parsed.OriginUsername = parts[0]
+			}
 			if len(parts) >= 3 {
 				parsed.SessionID, _ = strconv.ParseInt(parts[1], 10, 64)
 				parsed.SessionVersion, _ = strconv.ParseInt(parts[2], 10, 64)
@@ -118,6 +125,11 @@ func (p *SDPProcessorImpl) Parse(sdp string) (*ParsedSDP, error) {
 				parsed.MediaType = parts[0]
 				parsed.MediaPort, _ = strconv.Atoi(parts[1])
 				parsed.Protocol = parts[2]
+
+				// Detect AVPF (feedback profile)
+				if strings.Contains(parsed.Protocol, "AVPF") {
+					parsed.HasAVPF = true
+				}
 
 				// Parse payload types
 				payloadTypes = make([]int, 0, len(parts)-3)
@@ -226,6 +238,12 @@ func (p *SDPProcessorImpl) parseAttribute(value string, parsed *ParsedSDP, paylo
 			ssrc, _ := strconv.ParseUint(matches[1], 10, 32)
 			parsed.SSRC = uint32(ssrc)
 		}
+
+	case "ptime":
+		parsed.Ptime, _ = strconv.Atoi(attrValue)
+
+	case "mid":
+		parsed.MID = attrValue
 	}
 }
 
