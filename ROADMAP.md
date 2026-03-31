@@ -205,16 +205,16 @@ Implement all rtpengine NG protocol flags and options:
 - [x] `unblock-dtmf` - Unblock DTMF
 - [x] `silence-media` - Silence instead of block
 - [x] `inject-DTMF` - Inject DTMF (exists)
-- [ ] `play-media` - Play media file
-- [ ] `stop-media` - Stop media playback
+- [x] `play-media` - Play media file
+- [x] `stop-media` - Stop media playback
 
 #### Quality/Timeout
 - [x] `media-timeout` - Media timeout
 - [x] `session-timeout` - Session timeout
 - [x] `TOS` - Set TOS/DSCP
 - [x] `delete-delay` - Delay before delete
-- [ ] `delay-buffer` - Delay buffer config
-- [ ] `frequency` - RTCP interval
+- [x] `delay-buffer` - Delay buffer config
+- [x] `frequency` - RTCP interval
 
 ### 1.2 Behavioral Semantics
 

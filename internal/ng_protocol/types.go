@@ -362,6 +362,12 @@ type ParsedFlags struct {
 	SessionTimeout int  // Session timeout
 	DeleteDelay    int  // Delay before delete
 
+	// === Buffering ===
+	DelayBuffer    int  // Delay buffer in milliseconds for jitter compensation
+
+	// === RTCP ===
+	RTCPInterval   int  // RTCP report interval in milliseconds (frequency flag)
+
 	// === T.38 ===
 	T38Support   bool
 	T38Gateway   bool
@@ -466,6 +472,8 @@ func ParseFlags(flags []string) *ParsedFlags {
 		MediaTimeout:   -1,
 		SessionTimeout: -1,
 		DeleteDelay:    -1,
+		DelayBuffer:    -1,
+		RTCPInterval:   -1,
 		Ptime:          -1,
 	}
 
@@ -732,6 +740,18 @@ func parseKeyValueFlag(pf *ParsedFlags, key, value string) {
 	case "delete-delay":
 		if v := parseIntValue(value); v >= 0 {
 			pf.DeleteDelay = v
+		}
+
+	// Delay buffer (jitter compensation)
+	case "delay-buffer":
+		if v := parseIntValue(value); v >= 0 {
+			pf.DelayBuffer = v
+		}
+
+	// RTCP interval (frequency)
+	case "frequency", "rtcp-interval":
+		if v := parseIntValue(value); v >= 0 {
+			pf.RTCPInterval = v
 		}
 
 	// Ptime

@@ -8,13 +8,28 @@ import (
 // MediaControlHandler handles media control commands
 type MediaControlHandler struct {
 	sessionRegistry *internal.SessionRegistry
+	mediaPlayer     *internal.MediaPlayer
 }
 
 // NewMediaControlHandler creates a new media control handler
 func NewMediaControlHandler(registry *internal.SessionRegistry) *MediaControlHandler {
 	return &MediaControlHandler{
 		sessionRegistry: registry,
+		mediaPlayer:     internal.NewMediaPlayer(),
 	}
+}
+
+// NewMediaControlHandlerWithPlayer creates a handler with a specific media player
+func NewMediaControlHandlerWithPlayer(registry *internal.SessionRegistry, player *internal.MediaPlayer) *MediaControlHandler {
+	return &MediaControlHandler{
+		sessionRegistry: registry,
+		mediaPlayer:     player,
+	}
+}
+
+// GetMediaPlayer returns the media player instance
+func (h *MediaControlHandler) GetMediaPlayer() *internal.MediaPlayer {
+	return h.mediaPlayer
 }
 
 // HandleBlockMedia handles the "block media" command
@@ -186,14 +201,56 @@ func (h *MediaControlHandler) HandlePlayMedia(req *ng.NGRequest) (*ng.NGResponse
 		}, nil
 	}
 
-	// Set playback parameters
+	// Parse playback options
+	loop := false
+	blendOriginal := false
+	targetLeg := "both"
+	codec := ""
+
+	if req.RawParams != nil {
+		if ng.DictGetString(req.RawParams, "loop") == "yes" {
+			loop = true
+		}
+		if ng.DictGetString(req.RawParams, "blend") == "yes" {
+			blendOriginal = true
+		}
+		if leg := ng.DictGetString(req.RawParams, "leg"); leg != "" {
+			targetLeg = leg
+		}
+		if c := ng.DictGetString(req.RawParams, "codec"); c != "" {
+			codec = c
+		}
+	}
+
+	// Build playback config
+	config := &internal.PlaybackConfig{
+		FilePath:      filePath,
+		Codec:         codec,
+		Loop:          loop,
+		BlendOriginal: blendOriginal,
+		TargetLeg:     targetLeg,
+	}
+
+	// Start actual playback using the media player
+	sessionID := session.ID
+	if err := h.mediaPlayer.StartPlayback(sessionID, config); err != nil {
+		return &ng.NGResponse{
+			Result:      ng.ResultError,
+			ErrorReason: "Failed to start playback: " + err.Error(),
+		}, nil
+	}
+
+	// Set session flags for tracking
 	session.SetFlag("playing_media", true)
 	session.SetMetadata("play_file", filePath)
 
 	return &ng.NGResponse{
 		Result: ng.ResultOK,
 		Extra: map[string]interface{}{
-			"file": filePath,
+			"file":   filePath,
+			"loop":   loop,
+			"blend":  blendOriginal,
+			"leg":    targetLeg,
 		},
 	}, nil
 }
@@ -215,13 +272,93 @@ func (h *MediaControlHandler) HandleStopMedia(req *ng.NGRequest) (*ng.NGResponse
 		}, nil
 	}
 
-	// Clear playback
+	// Stop actual playback using the media player
+	sessionID := session.ID
+	_ = h.mediaPlayer.StopPlayback(sessionID) // Ignore error if not playing
+
+	// Clear playback flags
 	session.SetFlag("playing_media", false)
 	session.SetMetadata("play_file", "")
 
 	return &ng.NGResponse{
 		Result: ng.ResultOK,
 	}, nil
+}
+
+// HandlePauseMedia handles the "pause media" command
+func (h *MediaControlHandler) HandlePauseMedia(req *ng.NGRequest) (*ng.NGResponse, error) {
+	if req.CallID == "" {
+		return &ng.NGResponse{
+			Result:      ng.ResultError,
+			ErrorReason: ng.ErrReasonMissingParam + ": call-id",
+		}, nil
+	}
+
+	session := h.findSession(req)
+	if session == nil {
+		return &ng.NGResponse{
+			Result:      ng.ResultError,
+			ErrorReason: ng.ErrReasonNotFound,
+		}, nil
+	}
+
+	// Pause playback using the media player
+	sessionID := session.ID
+	if err := h.mediaPlayer.PausePlayback(sessionID); err != nil {
+		return &ng.NGResponse{
+			Result:      ng.ResultError,
+			ErrorReason: "Failed to pause playback: " + err.Error(),
+		}, nil
+	}
+
+	session.SetFlag("media_paused", true)
+
+	return &ng.NGResponse{
+		Result: ng.ResultOK,
+	}, nil
+}
+
+// HandleResumeMedia handles the "resume media" command
+func (h *MediaControlHandler) HandleResumeMedia(req *ng.NGRequest) (*ng.NGResponse, error) {
+	if req.CallID == "" {
+		return &ng.NGResponse{
+			Result:      ng.ResultError,
+			ErrorReason: ng.ErrReasonMissingParam + ": call-id",
+		}, nil
+	}
+
+	session := h.findSession(req)
+	if session == nil {
+		return &ng.NGResponse{
+			Result:      ng.ResultError,
+			ErrorReason: ng.ErrReasonNotFound,
+		}, nil
+	}
+
+	// Resume playback using the media player
+	sessionID := session.ID
+	if err := h.mediaPlayer.ResumePlayback(sessionID); err != nil {
+		return &ng.NGResponse{
+			Result:      ng.ResultError,
+			ErrorReason: "Failed to resume playback: " + err.Error(),
+		}, nil
+	}
+
+	session.SetFlag("media_paused", false)
+
+	return &ng.NGResponse{
+		Result: ng.ResultOK,
+	}, nil
+}
+
+// GetPlaybackStats returns playback statistics for a session
+func (h *MediaControlHandler) GetPlaybackStats(sessionID string) map[string]interface{} {
+	return h.mediaPlayer.GetStats()
+}
+
+// IsPlaying checks if a session has active media playback
+func (h *MediaControlHandler) IsPlaying(sessionID string) bool {
+	return h.mediaPlayer.IsPlaying(sessionID)
 }
 
 // findSession finds a session by call-id and tags

@@ -697,4 +697,86 @@ func TestParseFlags_DefaultValues(t *testing.T) {
 	if pf.Ptime != -1 {
 		t.Errorf("Expected default Ptime to be -1, got %d", pf.Ptime)
 	}
+	if pf.DelayBuffer != -1 {
+		t.Errorf("Expected default DelayBuffer to be -1, got %d", pf.DelayBuffer)
+	}
+	if pf.RTCPInterval != -1 {
+		t.Errorf("Expected default RTCPInterval to be -1, got %d", pf.RTCPInterval)
+	}
+}
+
+func TestParseFlags_DelayBuffer(t *testing.T) {
+	tests := []struct {
+		name     string
+		flags    []string
+		expected int
+	}{
+		{
+			name:     "delay-buffer not set",
+			flags:    []string{},
+			expected: -1,
+		},
+		{
+			name:     "delay-buffer set to 100",
+			flags:    []string{"delay-buffer=100"},
+			expected: 100,
+		},
+		{
+			name:     "delay-buffer set to 200",
+			flags:    []string{"delay-buffer=200"},
+			expected: 200,
+		},
+		{
+			name:     "delay-buffer with other flags",
+			flags:    []string{"symmetric", "delay-buffer=50", "rtcp-mux"},
+			expected: 50,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pf := ParseFlags(tt.flags)
+			if pf.DelayBuffer != tt.expected {
+				t.Errorf("DelayBuffer = %d, expected %d", pf.DelayBuffer, tt.expected)
+			}
+		})
+	}
+}
+
+func TestParseFlags_RTCPInterval(t *testing.T) {
+	tests := []struct {
+		name     string
+		flags    []string
+		expected int
+	}{
+		{
+			name:     "frequency not set",
+			flags:    []string{},
+			expected: -1,
+		},
+		{
+			name:     "frequency set to 5000",
+			flags:    []string{"frequency=5000"},
+			expected: 5000,
+		},
+		{
+			name:     "rtcp-interval set to 3000",
+			flags:    []string{"rtcp-interval=3000"},
+			expected: 3000,
+		},
+		{
+			name:     "frequency with other flags",
+			flags:    []string{"symmetric", "frequency=2500", "rtcp-mux"},
+			expected: 2500,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pf := ParseFlags(tt.flags)
+			if pf.RTCPInterval != tt.expected {
+				t.Errorf("RTCPInterval = %d, expected %d", pf.RTCPInterval, tt.expected)
+			}
+		})
+	}
 }
