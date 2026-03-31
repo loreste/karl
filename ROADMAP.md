@@ -220,16 +220,16 @@ Implement all rtpengine NG protocol flags and options:
 
 Beyond flag support, implement correct behavioral semantics:
 
-- [ ] **Per-leg state machine** - Track offer/answer state per leg
-- [ ] **Label resolution** - Resolve legs by label, not just tags
-- [ ] **Forked call handling** - Support multiple to-tags
-- [ ] **Re-INVITE semantics** - Proper mid-call SDP renegotiation
+- [x] **Per-leg state machine** - Track offer/answer state per leg
+- [x] **Label resolution** - Resolve legs by label, not just tags
+- [x] **Forked call handling** - Support multiple to-tags
+- [x] **Re-INVITE semantics** - Proper mid-call SDP renegotiation
 - [ ] **UPDATE handling** - SIP UPDATE method support
-- [ ] **Early media** - Correct early media behavior
-- [ ] **Hold/resume** - Proper hold detection and handling
-- [ ] **Asymmetric RTP** - Support different send/receive paths
-- [ ] **SSRC changes** - Handle SSRC changes mid-call
-- [ ] **PT remapping** - Payload type remapping
+- [x] **Early media** - Correct early media behavior
+- [x] **Hold/resume** - Proper hold detection and handling
+- [x] **Asymmetric RTP** - Support different send/receive paths
+- [x] **SSRC changes** - Handle SSRC changes mid-call
+- [x] **PT remapping** - Payload type remapping
 
 ### 1.3 Response Format Parity
 
