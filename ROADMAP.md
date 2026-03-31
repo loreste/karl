@@ -224,7 +224,7 @@ Beyond flag support, implement correct behavioral semantics:
 - [x] **Label resolution** - Resolve legs by label, not just tags
 - [x] **Forked call handling** - Support multiple to-tags
 - [x] **Re-INVITE semantics** - Proper mid-call SDP renegotiation
-- [ ] **UPDATE handling** - SIP UPDATE method support
+- [x] **UPDATE handling** - SIP UPDATE method support (uses same offer/answer flow)
 - [x] **Early media** - Correct early media behavior
 - [x] **Hold/resume** - Proper hold detection and handling
 - [x] **Asymmetric RTP** - Support different send/receive paths
@@ -257,58 +257,58 @@ Ensure responses match rtpengine format exactly:
 
 ### 2.1 RTP/RTCP Handling
 
-- [ ] **Strict RFC 3550 compliance** - Validate all RTP/RTCP
-- [ ] **SSRC collision detection** - Handle collisions properly
-- [ ] **Sequence number handling** - Correct wrap-around
-- [ ] **Timestamp handling** - Proper timestamp maintenance
-- [ ] **CSRC handling** - Contributor source handling
-- [ ] **Extension header support** - RTP extension headers
-- [ ] **Padding support** - RTP padding handling
-- [ ] **Marker bit handling** - Proper marker semantics
+- [x] **Strict RFC 3550 compliance** - Validate all RTP/RTCP (via pion/rtp)
+- [x] **SSRC collision detection** - Handle collisions properly (leg_state_machine.go)
+- [x] **Sequence number handling** - Correct wrap-around (pion/rtp)
+- [x] **Timestamp handling** - Proper timestamp maintenance (pion/rtp)
+- [x] **CSRC handling** - Contributor source handling (pion/rtp)
+- [x] **Extension header support** - RTP extension headers (pion/rtp)
+- [x] **Padding support** - RTP padding handling (pion/rtp)
+- [x] **Marker bit handling** - Proper marker semantics (pion/rtp)
 
 ### 2.2 SRTP Handling
 
-- [ ] **AES-CM encryption** - Counter mode
-- [ ] **AES-GCM encryption** - GCM mode
-- [ ] **HMAC-SHA1 auth** - Authentication
-- [ ] **Key derivation** - Proper key derivation
-- [ ] **ROC handling** - Roll-over counter
-- [ ] **MKI support** - Master Key Identifier
-- [ ] **Crypto suite negotiation** - All standard suites
-- [ ] **SRTP↔RTP gateway** - Clean transcryption
+- [x] **AES-CM encryption** - Counter mode (pion/srtp)
+- [x] **AES-GCM encryption** - GCM mode (pion/srtp)
+- [x] **HMAC-SHA1 auth** - Authentication (pion/srtp)
+- [x] **Key derivation** - Proper key derivation (pion/srtp)
+- [x] **ROC handling** - Roll-over counter (pion/srtp)
+- [x] **MKI support** - Master Key Identifier (pion/srtp)
+- [x] **Crypto suite negotiation** - All standard suites (pion/srtp)
+- [x] **SRTP↔RTP gateway** - Clean transcryption (rtp_forwarding.go)
 
 ### 2.3 NAT/Interface Logic
 
 Implement rtpengine-compatible interface handling:
 
-- [ ] **Named interfaces** - Define interfaces in config
-- [ ] **Interface selection** - Per-call interface choice
-- [ ] **Peer-based routing** - Select interface by peer
-- [ ] **Direction hints** - internal/external awareness
-- [ ] **NAT detection** - Automatic NAT detection
-- [ ] **Symmetric NAT** - Handle symmetric NAT
-- [ ] **Address learning** - Learn addresses from packets
-- [ ] **Port latching** - First-packet port latching
-- [ ] **Multiple NICs** - Support multiple interfaces
+- [x] **Named interfaces** - Define interfaces in config (interface_selector.go)
+- [x] **Interface selection** - Per-call interface choice (interface_selector.go)
+- [x] **Peer-based routing** - Select interface by peer (interface_selector.go)
+- [x] **Direction hints** - internal/external awareness (interface_selector.go)
+- [x] **NAT detection** - Automatic NAT detection (interface_selector.go)
+- [x] **Symmetric NAT** - Handle symmetric NAT (loop_protection.go)
+- [x] **Address learning** - Learn addresses from packets (loop_protection.go)
+- [x] **Port latching** - First-packet port latching (loop_protection.go)
+- [x] **Multiple NICs** - Support multiple interfaces (interface_selector.go)
 
 ### 2.4 IPv4↔IPv6 Bridging
 
-- [ ] **Dual-stack support** - IPv4 and IPv6 simultaneously
-- [ ] **IPv4↔IPv6 translation** - Bridge between families
-- [ ] **Address family selection** - Per-leg AF choice
+- [x] **Dual-stack support** - IPv4 and IPv6 simultaneously (ipv6_support.go)
+- [x] **IPv4↔IPv6 translation** - Bridge between families (ipv6_support.go)
+- [x] **Address family selection** - Per-leg AF choice (ipv6_support.go)
 - [ ] **DNS resolution** - A/AAAA lookup
 - [ ] **Happy eyeballs** - Fast fallback
 
 ### 2.5 ICE Handling
 
-- [ ] **ICE-full** - Complete ICE implementation
-- [ ] **ICE-lite** - ICE-lite mode
-- [ ] **Trickle ICE** - Incremental candidates
-- [ ] **ICE restart** - Handle ICE restarts
-- [ ] **Candidate gathering** - Host/srflx/relay
-- [ ] **Connectivity checks** - STUN binding
-- [ ] **Nomination** - Regular/aggressive
-- [ ] **ICE removal** - Clean ICE stripping
+- [x] **ICE-full** - Complete ICE implementation (pion/ice, ice_manager.go)
+- [x] **ICE-lite** - ICE-lite mode (session_manager.go ICELite flag)
+- [x] **Trickle ICE** - Incremental candidates (session_manager.go TrickleICE flag)
+- [x] **ICE restart** - Handle ICE restarts (pion/ice)
+- [x] **Candidate gathering** - Host/srflx/relay (ice_manager.go)
+- [x] **Connectivity checks** - STUN binding (pion/ice)
+- [x] **Nomination** - Regular/aggressive (pion/ice)
+- [x] **ICE removal** - Clean ICE stripping (sdp_processor.go)
 
 ### 2.6 Media Fast Path
 
@@ -336,31 +336,31 @@ Create an optimized path for simple forwarding:
 
 Implement RFC 7865/7866 SIPREC:
 
-- [ ] **SRS (Session Recording Server) mode** - Act as SRS
-- [ ] **SRC (Session Recording Client) mode** - Initiate recording
-- [ ] **Recording metadata** - Full metadata support
-- [ ] **XML body handling** - SIPREC XML parsing
-- [ ] **Participant info** - Participant metadata
-- [ ] **Stream correlation** - Correlate streams
-- [ ] **Recording session** - Separate recording dialog
-- [ ] **Selective recording** - Policy-based recording
-- [ ] **Recording pause/resume** - Mid-call control
-- [ ] **Recording storage** - Multiple backends
+- [x] **SRS (Session Recording Server) mode** - Act as SRS (siprec.go)
+- [x] **SRC (Session Recording Client) mode** - Initiate recording (siprec.go)
+- [x] **Recording metadata** - Full metadata support (siprec.go)
+- [x] **XML body handling** - SIPREC XML parsing (siprec.go)
+- [x] **Participant info** - Participant metadata (siprec.go)
+- [x] **Stream correlation** - Correlate streams (siprec.go)
+- [x] **Recording session** - Separate recording dialog (siprec.go)
+- [x] **Selective recording** - Policy-based recording (siprec.go)
+- [x] **Recording pause/resume** - Mid-call control (siprec.go)
+- [x] **Recording storage** - Multiple backends (recording/manager.go)
 
 ### 3.2 T.38 Fax Support
 
-- [ ] **T.38 detection** - Detect T.38 in SDP
-- [ ] **T.38 passthrough** - Transparent relay
-- [ ] **T.38↔audio** - Optional gateway mode
-- [ ] **IFP handling** - Internet Fax Protocol
-- [ ] **Error correction** - FEC for T.38
-- [ ] **Rate adaptation** - Bitrate handling
+- [x] **T.38 detection** - Detect T.38 in SDP (t38_gateway.go)
+- [x] **T.38 passthrough** - Transparent relay (t38_gateway.go)
+- [x] **T.38↔audio** - Optional gateway mode (t38_gateway.go)
+- [x] **IFP handling** - Internet Fax Protocol (t38_gateway.go)
+- [x] **Error correction** - FEC for T.38 (t38_gateway.go)
+- [x] **Rate adaptation** - Bitrate handling (t38_gateway.go)
 - [ ] **V.21 detection** - Fax tone detection
-- [ ] **Re-INVITE handling** - Audio↔T.38 switch
+- [x] **Re-INVITE handling** - Audio↔T.38 switch (t38_gateway.go)
 
 ### 3.3 Advanced Transcoding
 
-- [ ] **G.722** - Wideband codec
+- [x] **G.722** - Wideband codec (codec_converter.go)
 - [ ] **G.729** - Low bitrate (licensing required)
 - [ ] **AMR** - Mobile codec
 - [ ] **AMR-WB** - Wideband AMR
@@ -373,26 +373,26 @@ Implement RFC 7865/7866 SIPREC:
 
 ### 3.4 Multi-Node Clustering
 
-- [ ] **Distributed session state** - Redis/etcd backend
-- [ ] **Session ownership** - Clear ownership model
-- [ ] **Ownership transfer** - On node failure
-- [ ] **Idempotent commands** - Safe retries
+- [x] **Distributed session state** - Redis/etcd backend (redis_cluster.go)
+- [x] **Session ownership** - Clear ownership model (redis_cluster.go)
+- [x] **Ownership transfer** - On node failure (redis_cluster.go)
+- [x] **Idempotent commands** - Safe retries (redis_cluster.go)
 - [ ] **Consistent hashing** - Sticky placement
-- [ ] **Health monitoring** - Node health checks
-- [ ] **Drain mode** - Graceful shutdown
+- [x] **Health monitoring** - Node health checks (health.go)
+- [x] **Drain mode** - Graceful shutdown (health.go)
 - [ ] **Split brain handling** - Partition tolerance
 - [ ] **CDR coordination** - Distributed CDRs
-- [ ] **Recording coordination** - Shared recording state
+- [x] **Recording coordination** - Shared recording state (redis_cluster.go)
 
 ### 3.5 Failover Semantics
 
-- [ ] **Call preservation** - Survive node failure
+- [x] **Call preservation** - Survive node failure (redis_cluster.go)
 - [ ] **Port re-allocation** - Consistent ports
-- [ ] **Media recovery** - Resume media flow
-- [ ] **State recovery** - Recover from backend
+- [x] **Media recovery** - Resume media flow (redis_cluster.go)
+- [x] **State recovery** - Recover from backend (redis_cluster.go)
 - [ ] **Proxy notification** - Inform SIP proxy
 - [ ] **Recording continuity** - No recording gaps
-- [ ] **Statistics continuity** - Preserve stats
+- [x] **Statistics continuity** - Preserve stats (redis_cluster.go)
 
 ---
 
