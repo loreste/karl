@@ -163,9 +163,15 @@ func TestT38Gateway_GetSessionByCallID(t *testing.T) {
 	gw := NewT38Gateway(nil)
 
 	localIP := net.ParseIP("192.168.1.100")
-	gw.CreateSession("call-123", localIP, 5000)
+	s1, _ := gw.CreateSession("call-123", localIP, 5000)
 	gw.CreateSession("call-456", localIP, 5002)
-	gw.CreateSession("call-123", localIP, 5004) // Another for same call
+	time.Sleep(1 * time.Millisecond) // Ensure unique timestamp
+	s2, _ := gw.CreateSession("call-123", localIP, 5004) // Another for same call
+
+	// Verify both sessions were created with different IDs
+	if s1.ID == s2.ID {
+		t.Errorf("Expected different session IDs, both got %s", s1.ID)
+	}
 
 	sessions := gw.GetSessionByCallID("call-123")
 	if len(sessions) != 2 {
