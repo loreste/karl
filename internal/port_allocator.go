@@ -22,50 +22,75 @@ var (
 type PortAllocatorConfig struct {
 	MinPort        int
 	MaxPort        int
-	ReserveCount   int           // Number of ports to pre-allocate
+	ReserveCount   int           // Number of port pairs to pre-allocate
 	ReuseDelay     time.Duration // Time before a released port can be reused
 	MaxAllocations int           // Maximum simultaneous allocations per session
 	EvenOnly       bool          // Only allocate even ports (for RTP)
 }
 
-// DefaultPortAllocatorConfig returns sensible defaults
+// DefaultPortAllocatorConfig returns sensible defaults optimized for performance
 func DefaultPortAllocatorConfig() *PortAllocatorConfig {
 	return &PortAllocatorConfig{
 		MinPort:        10000,
 		MaxPort:        60000,
-		ReserveCount:   100,
-		ReuseDelay:     5 * time.Second,
+		ReserveCount:   500, // Pre-allocate more pairs for faster allocation
+		ReuseDelay:     2 * time.Second,
 		MaxAllocations: 100,
-		EvenOnly:       true, // RTP ports are typically even
+		EvenOnly:       true,
 	}
+}
+
+// portPair represents a pre-allocated RTP/RTCP port pair
+type portPair struct {
+	rtp  int
+	rtcp int
 }
 
 // PortAllocator manages port allocation with exhaustion protection
 type PortAllocator struct {
 	config *PortAllocatorConfig
 
-	// Port tracking
-	allocated   map[int]portInfo
-	released    map[int]time.Time
-	allocatedMu sync.RWMutex
+	// Lockless port pair pool using channel
+	pairPool chan portPair
 
-	// Pre-allocated port pool
-	portPool   []int
-	poolMu     sync.Mutex
+	// Port tracking with sharded locks for reduced contention
+	shards     [16]*portShard
+	shardMask  uint32
 
-	// Metrics
+	// Released ports waiting for reuse
+	released   sync.Map // port -> releaseTime
+
+	// Metrics (lock-free)
 	totalAllocated atomic.Int64
 	totalReleased  atomic.Int64
 	totalFailed    atomic.Int64
 	currentInUse   atomic.Int64
 	peakInUse      atomic.Int64
+	poolHits       atomic.Int64
+	poolMisses     atomic.Int64
 
-	// Per-session tracking
-	sessionPorts   map[string][]int
-	sessionPortsMu sync.RWMutex
+	// Per-session tracking with sharded lock
+	sessionShards [16]*sessionShard
+
+	// Next port hint for faster scanning
+	nextPort atomic.Int32
 
 	// State
-	closed atomic.Bool
+	closed   atomic.Bool
+	stopCh   chan struct{}
+	refillWg sync.WaitGroup
+}
+
+// portShard handles a subset of ports with its own lock
+type portShard struct {
+	mu        sync.RWMutex
+	allocated map[int]portInfo
+}
+
+// sessionShard handles a subset of sessions
+type sessionShard struct {
+	mu    sync.RWMutex
+	ports map[string][]int
 }
 
 type portInfo struct {
@@ -75,40 +100,139 @@ type portInfo struct {
 	conn        net.PacketConn
 }
 
-// NewPortAllocator creates a new port allocator
+// NewPortAllocator creates a new high-performance port allocator
 func NewPortAllocator(config *PortAllocatorConfig) *PortAllocator {
 	if config == nil {
 		config = DefaultPortAllocatorConfig()
 	}
 
 	pa := &PortAllocator{
-		config:       config,
-		allocated:    make(map[int]portInfo),
-		released:     make(map[int]time.Time),
-		portPool:     make([]int, 0, config.ReserveCount),
-		sessionPorts: make(map[string][]int),
+		config:    config,
+		pairPool:  make(chan portPair, config.ReserveCount),
+		shardMask: 15,
+		stopCh:    make(chan struct{}),
 	}
 
-	// Pre-allocate ports if configured
-	if config.ReserveCount > 0 {
-		go pa.preAllocatePorts()
+	// Initialize shards
+	for i := 0; i < 16; i++ {
+		pa.shards[i] = &portShard{
+			allocated: make(map[int]portInfo),
+		}
+		pa.sessionShards[i] = &sessionShard{
+			ports: make(map[string][]int),
+		}
 	}
+
+	// Set starting port
+	start := config.MinPort
+	if config.EvenOnly && start%2 != 0 {
+		start++
+	}
+	pa.nextPort.Store(int32(start))
+
+	// Start pool refiller
+	pa.refillWg.Add(1)
+	go pa.poolRefiller()
+
+	// Start released port cleaner
+	go pa.releasedCleaner()
 
 	return pa
 }
 
-// preAllocatePorts pre-allocates ports for faster allocation
-func (pa *PortAllocator) preAllocatePorts() {
-	pa.poolMu.Lock()
-	defer pa.poolMu.Unlock()
+// poolRefiller continuously refills the port pair pool
+func (pa *PortAllocator) poolRefiller() {
+	defer pa.refillWg.Done()
 
-	for i := 0; i < pa.config.ReserveCount && !pa.closed.Load(); i++ {
-		port, err := pa.findAvailablePort()
-		if err != nil {
-			break
+	for {
+		select {
+		case <-pa.stopCh:
+			return
+		default:
+			// Check if pool needs refilling
+			if len(pa.pairPool) < pa.config.ReserveCount/2 {
+				pa.refillPool()
+			}
+			time.Sleep(10 * time.Millisecond)
 		}
-		pa.portPool = append(pa.portPool, port)
 	}
+}
+
+// refillPool adds port pairs to the pool
+func (pa *PortAllocator) refillPool() {
+	target := pa.config.ReserveCount - len(pa.pairPool)
+	if target <= 0 {
+		return
+	}
+
+	for i := 0; i < target; i++ {
+		pair, ok := pa.findAvailablePortPair()
+		if !ok {
+			return
+		}
+
+		select {
+		case pa.pairPool <- pair:
+		default:
+			// Pool full, release the pair
+			pa.markPortAvailable(pair.rtp)
+			pa.markPortAvailable(pair.rtcp)
+			return
+		}
+	}
+}
+
+// releasedCleaner periodically cleans up released ports
+func (pa *PortAllocator) releasedCleaner() {
+	// Use shorter interval for responsive cleanup
+	interval := pa.config.ReuseDelay / 2
+	if interval < 50*time.Millisecond {
+		interval = 50 * time.Millisecond
+	}
+	if interval > time.Second {
+		interval = time.Second
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-pa.stopCh:
+			return
+		case <-ticker.C:
+			now := time.Now()
+			pa.released.Range(func(key, value interface{}) bool {
+				if releaseTime, ok := value.(time.Time); ok {
+					if now.Sub(releaseTime) >= pa.config.ReuseDelay {
+						pa.released.Delete(key)
+					}
+				}
+				return true
+			})
+		}
+	}
+}
+
+// getShard returns the shard for a port
+func (pa *PortAllocator) getShard(port int) *portShard {
+	return pa.shards[uint32(port)&pa.shardMask]
+}
+
+// getSessionShard returns the session shard for a session ID
+func (pa *PortAllocator) getSessionShard(sessionID string) *sessionShard {
+	h := fnv1aString(sessionID)
+	return pa.sessionShards[h&pa.shardMask]
+}
+
+// fnv1aString computes FNV-1a hash of a string
+func fnv1aString(s string) uint32 {
+	var h uint32 = 2166136261
+	for i := 0; i < len(s); i++ {
+		h ^= uint32(s[i])
+		h *= 16777619
+	}
+	return h
 }
 
 // AllocatePort allocates a single port
@@ -117,25 +241,37 @@ func (pa *PortAllocator) AllocatePort(sessionID string) (int, error) {
 		return 0, errors.New("port allocator is closed")
 	}
 
-	// Check session allocation limit
-	pa.sessionPortsMu.RLock()
-	sessionCount := len(pa.sessionPorts[sessionID])
-	pa.sessionPortsMu.RUnlock()
+	// Check session limit
+	ss := pa.getSessionShard(sessionID)
+	ss.mu.RLock()
+	count := len(ss.ports[sessionID])
+	ss.mu.RUnlock()
 
-	if sessionCount >= pa.config.MaxAllocations {
+	if count >= pa.config.MaxAllocations {
 		pa.totalFailed.Add(1)
 		return 0, ErrPortAllocationLimit
 	}
 
-	// Try to get from pre-allocated pool first
-	port, err := pa.getFromPool()
-	if err == nil {
-		pa.recordAllocation(port, sessionID, nil)
-		return port, nil
+	// Try to get from pool (just take the RTP port from a pair)
+	select {
+	case pair := <-pa.pairPool:
+		pa.poolHits.Add(1)
+		// Return RTCP to pool for single port allocation
+		go func() {
+			select {
+			case pa.pairPool <- portPair{rtp: pair.rtcp, rtcp: pair.rtcp + 1}:
+			default:
+				pa.markPortAvailable(pair.rtcp)
+			}
+		}()
+		pa.recordAllocation(pair.rtp, sessionID, nil)
+		return pair.rtp, nil
+	default:
+		pa.poolMisses.Add(1)
 	}
 
-	// Find and allocate a new port
-	port, err = pa.findAndAllocatePort(sessionID)
+	// Find a new port
+	port, err := pa.findAndAllocatePort(sessionID)
 	if err != nil {
 		pa.totalFailed.Add(1)
 		return 0, err
@@ -150,38 +286,243 @@ func (pa *PortAllocator) AllocatePortPair(sessionID string) (rtpPort, rtcpPort i
 		return 0, 0, errors.New("port allocator is closed")
 	}
 
-	// Check session allocation limit (need 2 ports)
-	pa.sessionPortsMu.RLock()
-	sessionCount := len(pa.sessionPorts[sessionID])
-	pa.sessionPortsMu.RUnlock()
+	// Check session limit
+	ss := pa.getSessionShard(sessionID)
+	ss.mu.RLock()
+	count := len(ss.ports[sessionID])
+	ss.mu.RUnlock()
 
-	if sessionCount+2 > pa.config.MaxAllocations {
+	if count+2 > pa.config.MaxAllocations {
 		pa.totalFailed.Add(1)
 		return 0, 0, ErrPortAllocationLimit
 	}
 
-	pa.allocatedMu.Lock()
-	defer pa.allocatedMu.Unlock()
-
-	// Find consecutive even/odd port pair
-	start := pa.config.MinPort
-	if pa.config.EvenOnly && start%2 != 0 {
-		start++
+	// Try to get from pool first (fast path)
+	select {
+	case pair := <-pa.pairPool:
+		pa.poolHits.Add(1)
+		pa.recordAllocation(pair.rtp, sessionID, nil)
+		pa.recordAllocation(pair.rtcp, sessionID, nil)
+		return pair.rtp, pair.rtcp, nil
+	default:
+		pa.poolMisses.Add(1)
 	}
 
-	for port := start; port < pa.config.MaxPort-1; port += 2 {
-		if pa.isPortAvailable(port) && pa.isPortAvailable(port+1) {
-			// Try to bind both ports
-			if pa.tryBindPort(port) && pa.tryBindPort(port+1) {
-				pa.recordAllocationLocked(port, sessionID, nil)
-				pa.recordAllocationLocked(port+1, sessionID, nil)
-				return port, port + 1, nil
-			}
+	// Slow path: find and allocate directly
+	pair, ok := pa.findAvailablePortPair()
+	if !ok {
+		pa.totalFailed.Add(2)
+		return 0, 0, ErrNoPortsAvailable
+	}
+
+	pa.recordAllocation(pair.rtp, sessionID, nil)
+	pa.recordAllocation(pair.rtcp, sessionID, nil)
+
+	return pair.rtp, pair.rtcp, nil
+}
+
+// findAvailablePortPair finds an available port pair
+func (pa *PortAllocator) findAvailablePortPair() (portPair, bool) {
+	start := int(pa.nextPort.Load())
+	end := pa.config.MaxPort - 1
+
+	// Scan from hint
+	for port := start; port < end; port += 2 {
+		if pa.tryReservePortPair(port) {
+			pa.nextPort.Store(int32(port + 2))
+			return portPair{rtp: port, rtcp: port + 1}, true
 		}
 	}
 
-	pa.totalFailed.Add(2)
-	return 0, 0, ErrNoPortsAvailable
+	// Wrap around
+	wrapStart := pa.config.MinPort
+	if pa.config.EvenOnly && wrapStart%2 != 0 {
+		wrapStart++
+	}
+
+	for port := wrapStart; port < start && port < end; port += 2 {
+		if pa.tryReservePortPair(port) {
+			pa.nextPort.Store(int32(port + 2))
+			return portPair{rtp: port, rtcp: port + 1}, true
+		}
+	}
+
+	return portPair{}, false
+}
+
+// tryReservePortPair attempts to reserve a port pair
+func (pa *PortAllocator) tryReservePortPair(rtpPort int) bool {
+	rtcpPort := rtpPort + 1
+
+	// Check released map first (fast)
+	if _, ok := pa.released.Load(rtpPort); ok {
+		return false
+	}
+	if _, ok := pa.released.Load(rtcpPort); ok {
+		return false
+	}
+
+	// Check allocated maps
+	rtpShard := pa.getShard(rtpPort)
+	rtcpShard := pa.getShard(rtcpPort)
+
+	// Lock in order to prevent deadlock
+	if rtpShard == rtcpShard {
+		rtpShard.mu.Lock()
+		defer rtpShard.mu.Unlock()
+
+		if _, exists := rtpShard.allocated[rtpPort]; exists {
+			return false
+		}
+		if _, exists := rtpShard.allocated[rtcpPort]; exists {
+			return false
+		}
+
+		// Try to bind
+		if !pa.tryBind(rtpPort) || !pa.tryBind(rtcpPort) {
+			return false
+		}
+
+		// Mark as allocated (temporary, will be set properly in recordAllocation)
+		rtpShard.allocated[rtpPort] = portInfo{port: rtpPort, allocatedAt: time.Now()}
+		rtpShard.allocated[rtcpPort] = portInfo{port: rtcpPort, allocatedAt: time.Now()}
+		return true
+	}
+
+	// Different shards - lock both
+	rtpShard.mu.Lock()
+	rtcpShard.mu.Lock()
+
+	defer rtpShard.mu.Unlock()
+	defer rtcpShard.mu.Unlock()
+
+	if _, exists := rtpShard.allocated[rtpPort]; exists {
+		return false
+	}
+	if _, exists := rtcpShard.allocated[rtcpPort]; exists {
+		return false
+	}
+
+	if !pa.tryBind(rtpPort) || !pa.tryBind(rtcpPort) {
+		return false
+	}
+
+	rtpShard.allocated[rtpPort] = portInfo{port: rtpPort, allocatedAt: time.Now()}
+	rtcpShard.allocated[rtcpPort] = portInfo{port: rtcpPort, allocatedAt: time.Now()}
+	return true
+}
+
+// tryBind attempts to bind to a port
+func (pa *PortAllocator) tryBind(port int) bool {
+	conn, err := net.ListenPacket("udp", fmt.Sprintf(":%d", port))
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
+}
+
+// markPortAvailable marks a port as available (for pool overflow)
+func (pa *PortAllocator) markPortAvailable(port int) {
+	shard := pa.getShard(port)
+	shard.mu.Lock()
+	delete(shard.allocated, port)
+	shard.mu.Unlock()
+}
+
+// findAndAllocatePort finds and allocates a single port
+func (pa *PortAllocator) findAndAllocatePort(sessionID string) (int, error) {
+	start := int(pa.nextPort.Load())
+	step := 1
+	if pa.config.EvenOnly {
+		step = 2
+	}
+
+	// Scan from hint
+	for port := start; port <= pa.config.MaxPort; port += step {
+		if pa.tryAllocatePort(port, sessionID) {
+			pa.nextPort.Store(int32(port + step))
+			return port, nil
+		}
+	}
+
+	// Wrap around
+	wrapStart := pa.config.MinPort
+	if pa.config.EvenOnly && wrapStart%2 != 0 {
+		wrapStart++
+	}
+
+	for port := wrapStart; port < start; port += step {
+		if pa.tryAllocatePort(port, sessionID) {
+			pa.nextPort.Store(int32(port + step))
+			return port, nil
+		}
+	}
+
+	return 0, ErrNoPortsAvailable
+}
+
+// tryAllocatePort attempts to allocate a single port
+func (pa *PortAllocator) tryAllocatePort(port int, sessionID string) bool {
+	if _, ok := pa.released.Load(port); ok {
+		return false
+	}
+
+	shard := pa.getShard(port)
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+
+	if _, exists := shard.allocated[port]; exists {
+		return false
+	}
+
+	if !pa.tryBind(port) {
+		return false
+	}
+
+	shard.allocated[port] = portInfo{
+		port:        port,
+		sessionID:   sessionID,
+		allocatedAt: time.Now(),
+	}
+
+	pa.recordAllocationStats(port, sessionID)
+	return true
+}
+
+// recordAllocation records a port allocation
+func (pa *PortAllocator) recordAllocation(port int, sessionID string, conn net.PacketConn) {
+	shard := pa.getShard(port)
+	shard.mu.Lock()
+	shard.allocated[port] = portInfo{
+		port:        port,
+		sessionID:   sessionID,
+		allocatedAt: time.Now(),
+		conn:        conn,
+	}
+	shard.mu.Unlock()
+
+	pa.recordAllocationStats(port, sessionID)
+}
+
+// recordAllocationStats updates stats and session tracking
+func (pa *PortAllocator) recordAllocationStats(port int, sessionID string) {
+	// Update session tracking
+	ss := pa.getSessionShard(sessionID)
+	ss.mu.Lock()
+	ss.ports[sessionID] = append(ss.ports[sessionID], port)
+	ss.mu.Unlock()
+
+	pa.totalAllocated.Add(1)
+	current := pa.currentInUse.Add(1)
+
+	// Update peak (lock-free)
+	for {
+		peak := pa.peakInUse.Load()
+		if current <= peak || pa.peakInUse.CompareAndSwap(peak, current) {
+			break
+		}
+	}
 }
 
 // AllocateWithConnection allocates a port and returns the bound connection
@@ -190,42 +531,52 @@ func (pa *PortAllocator) AllocateWithConnection(sessionID string, network string
 		return 0, nil, errors.New("port allocator is closed")
 	}
 
-	// Check session allocation limit
-	pa.sessionPortsMu.RLock()
-	sessionCount := len(pa.sessionPorts[sessionID])
-	pa.sessionPortsMu.RUnlock()
+	ss := pa.getSessionShard(sessionID)
+	ss.mu.RLock()
+	count := len(ss.ports[sessionID])
+	ss.mu.RUnlock()
 
-	if sessionCount >= pa.config.MaxAllocations {
+	if count >= pa.config.MaxAllocations {
 		pa.totalFailed.Add(1)
 		return 0, nil, ErrPortAllocationLimit
 	}
 
-	pa.allocatedMu.Lock()
-	defer pa.allocatedMu.Unlock()
-
-	start := pa.config.MinPort
-	if pa.config.EvenOnly && start%2 != 0 {
-		start++
-	}
-
+	start := int(pa.nextPort.Load())
 	step := 1
 	if pa.config.EvenOnly {
 		step = 2
 	}
 
 	for port := start; port <= pa.config.MaxPort; port += step {
-		if !pa.isPortAvailable(port) {
+		if _, ok := pa.released.Load(port); ok {
 			continue
 		}
 
-		// Try to bind
-		addr := fmt.Sprintf(":%d", port)
-		conn, err := net.ListenPacket(network, addr)
+		shard := pa.getShard(port)
+		shard.mu.Lock()
+
+		if _, exists := shard.allocated[port]; exists {
+			shard.mu.Unlock()
+			continue
+		}
+
+		conn, err := net.ListenPacket(network, fmt.Sprintf(":%d", port))
 		if err != nil {
+			shard.mu.Unlock()
 			continue
 		}
 
-		pa.recordAllocationLocked(port, sessionID, conn)
+		shard.allocated[port] = portInfo{
+			port:        port,
+			sessionID:   sessionID,
+			allocatedAt: time.Now(),
+			conn:        conn,
+		}
+		shard.mu.Unlock()
+
+		pa.nextPort.Store(int32(port + step))
+		pa.recordAllocationStats(port, sessionID)
+
 		return port, conn, nil
 	}
 
@@ -235,39 +586,42 @@ func (pa *PortAllocator) AllocateWithConnection(sessionID string, network string
 
 // ReleasePort releases a previously allocated port
 func (pa *PortAllocator) ReleasePort(port int) error {
-	pa.allocatedMu.Lock()
-	defer pa.allocatedMu.Unlock()
+	shard := pa.getShard(port)
+	shard.mu.Lock()
 
-	info, exists := pa.allocated[port]
+	info, exists := shard.allocated[port]
 	if !exists {
+		shard.mu.Unlock()
 		return ErrPortOutOfRange
 	}
 
-	// Close connection if we hold it
 	if info.conn != nil {
 		info.conn.Close()
 	}
 
-	// Remove from allocated
-	delete(pa.allocated, port)
+	delete(shard.allocated, port)
+	sessionID := info.sessionID
+	shard.mu.Unlock()
 
-	// Track release time for reuse delay
-	pa.released[port] = time.Now()
+	// Mark as released (reuse delay)
+	pa.released.Store(port, time.Now())
 
 	// Update session tracking
-	pa.sessionPortsMu.Lock()
-	if ports, exists := pa.sessionPorts[info.sessionID]; exists {
+	if sessionID != "" {
+		ss := pa.getSessionShard(sessionID)
+		ss.mu.Lock()
+		ports := ss.ports[sessionID]
 		for i, p := range ports {
 			if p == port {
-				pa.sessionPorts[info.sessionID] = append(ports[:i], ports[i+1:]...)
+				ss.ports[sessionID] = append(ports[:i], ports[i+1:]...)
 				break
 			}
 		}
-		if len(pa.sessionPorts[info.sessionID]) == 0 {
-			delete(pa.sessionPorts, info.sessionID)
+		if len(ss.ports[sessionID]) == 0 {
+			delete(ss.ports, sessionID)
 		}
+		ss.mu.Unlock()
 	}
-	pa.sessionPortsMu.Unlock()
 
 	pa.totalReleased.Add(1)
 	pa.currentInUse.Add(-1)
@@ -277,10 +631,11 @@ func (pa *PortAllocator) ReleasePort(port int) error {
 
 // ReleaseSessionPorts releases all ports for a session
 func (pa *PortAllocator) ReleaseSessionPorts(sessionID string) error {
-	pa.sessionPortsMu.RLock()
-	ports := make([]int, len(pa.sessionPorts[sessionID]))
-	copy(ports, pa.sessionPorts[sessionID])
-	pa.sessionPortsMu.RUnlock()
+	ss := pa.getSessionShard(sessionID)
+	ss.mu.Lock()
+	ports := make([]int, len(ss.ports[sessionID]))
+	copy(ports, ss.ports[sessionID])
+	ss.mu.Unlock()
 
 	var lastErr error
 	for _, port := range ports {
@@ -292,171 +647,22 @@ func (pa *PortAllocator) ReleaseSessionPorts(sessionID string) error {
 	return lastErr
 }
 
-// getFromPool tries to get a port from the pre-allocated pool
-func (pa *PortAllocator) getFromPool() (int, error) {
-	pa.poolMu.Lock()
-	defer pa.poolMu.Unlock()
-
-	if len(pa.portPool) == 0 {
-		return 0, ErrPortPoolExhausted
-	}
-
-	port := pa.portPool[len(pa.portPool)-1]
-	pa.portPool = pa.portPool[:len(pa.portPool)-1]
-
-	// Verify it's still available
-	pa.allocatedMu.RLock()
-	available := pa.isPortAvailable(port)
-	pa.allocatedMu.RUnlock()
-
-	if !available {
-		return 0, ErrPortInUse
-	}
-
-	return port, nil
-}
-
-// findAvailablePort finds an available port
-func (pa *PortAllocator) findAvailablePort() (int, error) {
-	pa.allocatedMu.RLock()
-	defer pa.allocatedMu.RUnlock()
-
-	start := pa.config.MinPort
-	if pa.config.EvenOnly && start%2 != 0 {
-		start++
-	}
-
-	step := 1
-	if pa.config.EvenOnly {
-		step = 2
-	}
-
-	for port := start; port <= pa.config.MaxPort; port += step {
-		if pa.isPortAvailable(port) {
-			return port, nil
-		}
-	}
-
-	return 0, ErrNoPortsAvailable
-}
-
-// findAndAllocatePort finds and allocates a port
-func (pa *PortAllocator) findAndAllocatePort(sessionID string) (int, error) {
-	pa.allocatedMu.Lock()
-	defer pa.allocatedMu.Unlock()
-
-	start := pa.config.MinPort
-	if pa.config.EvenOnly && start%2 != 0 {
-		start++
-	}
-
-	step := 1
-	if pa.config.EvenOnly {
-		step = 2
-	}
-
-	for port := start; port <= pa.config.MaxPort; port += step {
-		if pa.isPortAvailable(port) {
-			// Try to bind
-			if pa.tryBindPort(port) {
-				pa.recordAllocationLocked(port, sessionID, nil)
-				return port, nil
-			}
-		}
-	}
-
-	return 0, ErrNoPortsAvailable
-}
-
-// isPortAvailable checks if a port is available for allocation
-func (pa *PortAllocator) isPortAvailable(port int) bool {
-	// Check if already allocated
-	if _, exists := pa.allocated[port]; exists {
-		return false
-	}
-
-	// Check reuse delay
-	if releaseTime, exists := pa.released[port]; exists {
-		if time.Since(releaseTime) < pa.config.ReuseDelay {
-			return false
-		}
-		// Clean up old release record
-		delete(pa.released, port)
-	}
-
-	return true
-}
-
-// tryBindPort attempts to bind to a port to verify it's available
-func (pa *PortAllocator) tryBindPort(port int) bool {
-	addr := fmt.Sprintf(":%d", port)
-	conn, err := net.ListenPacket("udp", addr)
-	if err != nil {
-		return false
-	}
-	conn.Close()
-	return true
-}
-
-// recordAllocation records a port allocation
-func (pa *PortAllocator) recordAllocation(port int, sessionID string, conn net.PacketConn) {
-	pa.allocatedMu.Lock()
-	pa.recordAllocationLocked(port, sessionID, conn)
-	pa.allocatedMu.Unlock()
-}
-
-// recordAllocationLocked records a port allocation (must hold allocatedMu)
-func (pa *PortAllocator) recordAllocationLocked(port int, sessionID string, conn net.PacketConn) {
-	pa.allocated[port] = portInfo{
-		port:        port,
-		sessionID:   sessionID,
-		allocatedAt: time.Now(),
-		conn:        conn,
-	}
-
-	pa.sessionPortsMu.Lock()
-	pa.sessionPorts[sessionID] = append(pa.sessionPorts[sessionID], port)
-	pa.sessionPortsMu.Unlock()
-
-	pa.totalAllocated.Add(1)
-	current := pa.currentInUse.Add(1)
-
-	// Update peak
-	for {
-		peak := pa.peakInUse.Load()
-		if current <= peak {
-			break
-		}
-		if pa.peakInUse.CompareAndSwap(peak, current) {
-			break
-		}
-	}
-}
-
-// GetAvailableCount returns the number of available ports
+// GetAvailableCount returns approximate number of available ports
 func (pa *PortAllocator) GetAvailableCount() int {
-	pa.allocatedMu.RLock()
-	defer pa.allocatedMu.RUnlock()
-
 	totalPorts := (pa.config.MaxPort - pa.config.MinPort) / 2
 	if !pa.config.EvenOnly {
 		totalPorts = pa.config.MaxPort - pa.config.MinPort + 1
 	}
-
-	return totalPorts - len(pa.allocated)
+	return totalPorts - int(pa.currentInUse.Load())
 }
 
 // GetUtilization returns the port pool utilization (0-1)
 func (pa *PortAllocator) GetUtilization() float64 {
-	pa.allocatedMu.RLock()
-	defer pa.allocatedMu.RUnlock()
-
 	totalPorts := (pa.config.MaxPort - pa.config.MinPort) / 2
 	if !pa.config.EvenOnly {
 		totalPorts = pa.config.MaxPort - pa.config.MinPort + 1
 	}
-
-	return float64(len(pa.allocated)) / float64(totalPorts)
+	return float64(pa.currentInUse.Load()) / float64(totalPorts)
 }
 
 // IsNearExhaustion checks if the port pool is near exhaustion
@@ -466,22 +672,29 @@ func (pa *PortAllocator) IsNearExhaustion(threshold float64) bool {
 
 // GetStats returns port allocator statistics
 func (pa *PortAllocator) GetStats() map[string]interface{} {
-	pa.allocatedMu.RLock()
-	allocatedCount := len(pa.allocated)
-	pa.allocatedMu.RUnlock()
+	// Count allocated ports and sessions
+	var allocatedCount int
+	sessionSet := make(map[string]struct{})
 
-	pa.sessionPortsMu.RLock()
-	sessionCount := len(pa.sessionPorts)
-	pa.sessionPortsMu.RUnlock()
-
-	pa.poolMu.Lock()
-	poolSize := len(pa.portPool)
-	pa.poolMu.Unlock()
+	for i := 0; i < 16; i++ {
+		shard := pa.shards[i]
+		shard.mu.RLock()
+		allocatedCount += len(shard.allocated)
+		for _, info := range shard.allocated {
+			if info.sessionID != "" {
+				sessionSet[info.sessionID] = struct{}{}
+			}
+		}
+		shard.mu.RUnlock()
+	}
 
 	return map[string]interface{}{
 		"allocated_count":  allocatedCount,
-		"session_count":    sessionCount,
-		"pool_size":        poolSize,
+		"session_count":    len(sessionSet),
+		"pool_size":        len(pa.pairPool),
+		"pool_capacity":    cap(pa.pairPool),
+		"pool_hits":        pa.poolHits.Load(),
+		"pool_misses":      pa.poolMisses.Load(),
 		"total_allocated":  pa.totalAllocated.Load(),
 		"total_released":   pa.totalReleased.Load(),
 		"total_failed":     pa.totalFailed.Load(),
@@ -500,19 +713,31 @@ func (pa *PortAllocator) Close() error {
 		return nil
 	}
 
-	pa.allocatedMu.Lock()
-	defer pa.allocatedMu.Unlock()
+	close(pa.stopCh)
+	pa.refillWg.Wait()
 
-	for port, info := range pa.allocated {
-		if info.conn != nil {
-			info.conn.Close()
+	// Drain pool
+	for {
+		select {
+		case <-pa.pairPool:
+		default:
+			goto drainDone
 		}
-		delete(pa.allocated, port)
 	}
+drainDone:
 
-	pa.poolMu.Lock()
-	pa.portPool = nil
-	pa.poolMu.Unlock()
+	// Release all allocated ports
+	for i := 0; i < 16; i++ {
+		shard := pa.shards[i]
+		shard.mu.Lock()
+		for port, info := range shard.allocated {
+			if info.conn != nil {
+				info.conn.Close()
+			}
+			delete(shard.allocated, port)
+		}
+		shard.mu.Unlock()
+	}
 
 	return nil
 }
@@ -534,11 +759,9 @@ func (pa *PortAllocator) NewPortReservation(sessionID string, count int) (*PortR
 		sessionID: sessionID,
 	}
 
-	// Allocate requested ports
 	for i := 0; i < count; i++ {
 		port, err := pa.AllocatePort(sessionID)
 		if err != nil {
-			// Rollback on failure
 			reservation.Rollback()
 			return nil, err
 		}
@@ -589,4 +812,9 @@ func GetPortAllocator() *PortAllocator {
 		globalPortAllocator = NewPortAllocator(DefaultPortAllocatorConfig())
 	})
 	return globalPortAllocator
+}
+
+// SetGlobalPortAllocator sets the global port allocator (for testing)
+func SetGlobalPortAllocator(pa *PortAllocator) {
+	globalPortAllocator = pa
 }

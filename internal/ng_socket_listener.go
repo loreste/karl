@@ -55,6 +55,7 @@ type NGSocketListener struct {
 	config          *Config
 	sessionRegistry *SessionRegistry
 	handlers        map[string]NGCommandHandler
+	portAllocator   *PortAllocator
 
 	// Socket connections
 	unixListener net.Listener
@@ -73,10 +74,21 @@ type NGSocketListener struct {
 func NewNGSocketListener(config *Config, sessionRegistry *SessionRegistry) *NGSocketListener {
 	ctx, cancel := context.WithCancel(context.Background())
 
+	// Initialize port allocator for media ports
+	portConfig := DefaultPortAllocatorConfig()
+	sessionConfig := config.GetSessionConfig()
+	if sessionConfig.MinPort > 0 {
+		portConfig.MinPort = sessionConfig.MinPort
+	}
+	if sessionConfig.MaxPort > 0 {
+		portConfig.MaxPort = sessionConfig.MaxPort
+	}
+
 	l := &NGSocketListener{
 		config:          config,
 		sessionRegistry: sessionRegistry,
 		handlers:        make(map[string]NGCommandHandler),
+		portAllocator:   NewPortAllocator(portConfig),
 		ctx:             ctx,
 		cancel:          cancel,
 		startTime:       time.Now(),
@@ -497,14 +509,49 @@ func (l *NGSocketListener) handleOffer(req *ng.NGRequest) (*ng.NGResponse, error
 
 	_ = l.sessionRegistry.UpdateSessionState(session.ID, string(SessionStatePending))
 
-	// TODO: Full SDP processing would go here
-	// For now, return a basic response
+	// Parse incoming SDP
+	parsedSDP, err := l.parseSDP(req.SDP)
+	if err != nil {
+		return &ng.NGResponse{Result: ng.ResultError, ErrorReason: "failed to parse SDP: " + err.Error()}, nil
+	}
+
+	// Allocate media ports for this session
+	rtpPort, err := l.portAllocator.AllocatePort(session.ID)
+	if err != nil {
+		return &ng.NGResponse{Result: ng.ResultError, ErrorReason: "failed to allocate port: " + err.Error()}, nil
+	}
+	rtcpPort := rtpPort + 1
+
+	// Get local IP
+	localIP := l.config.Integration.PublicIP
+	if localIP == "" {
+		localIP = l.config.Integration.MediaIP
+	}
+	if localIP == "" {
+		localIP = "127.0.0.1"
+	}
+
+	// Build response SDP with Karl's address and ports
+	responseSDP := l.buildResponseSDP(parsedSDP, localIP, rtpPort, req.Flags)
+
+	// Build stream info for response
+	streams := []ng.StreamInfo{
+		{
+			LocalIP:       localIP,
+			LocalPort:     rtpPort,
+			LocalRTCPPort: rtcpPort,
+			MediaType:     parsedSDP.MediaType,
+			Protocol:      l.determineProtocol(parsedSDP, req.Flags),
+			Index:         0,
+		},
+	}
 
 	return &ng.NGResponse{
 		Result:  ng.ResultOK,
-		SDP:     req.SDP, // Echo back for now
+		SDP:     responseSDP,
 		CallID:  req.CallID,
 		FromTag: req.FromTag,
+		Streams: streams,
 	}, nil
 }
 
@@ -526,12 +573,50 @@ func (l *NGSocketListener) handleAnswer(req *ng.NGRequest) (*ng.NGResponse, erro
 
 	_ = l.sessionRegistry.UpdateSessionState(session.ID, string(SessionStateActive))
 
+	// Parse incoming SDP
+	parsedSDP, err := l.parseSDP(req.SDP)
+	if err != nil {
+		return &ng.NGResponse{Result: ng.ResultError, ErrorReason: "failed to parse SDP: " + err.Error()}, nil
+	}
+
+	// Allocate media ports for the answering leg
+	rtpPort, err := l.portAllocator.AllocatePort(session.ID)
+	if err != nil {
+		return &ng.NGResponse{Result: ng.ResultError, ErrorReason: "failed to allocate port: " + err.Error()}, nil
+	}
+	rtcpPort := rtpPort + 1
+
+	// Get local IP
+	localIP := l.config.Integration.PublicIP
+	if localIP == "" {
+		localIP = l.config.Integration.MediaIP
+	}
+	if localIP == "" {
+		localIP = "127.0.0.1"
+	}
+
+	// Build response SDP
+	responseSDP := l.buildResponseSDP(parsedSDP, localIP, rtpPort, req.Flags)
+
+	// Build stream info
+	streams := []ng.StreamInfo{
+		{
+			LocalIP:       localIP,
+			LocalPort:     rtpPort,
+			LocalRTCPPort: rtcpPort,
+			MediaType:     parsedSDP.MediaType,
+			Protocol:      l.determineProtocol(parsedSDP, req.Flags),
+			Index:         0,
+		},
+	}
+
 	return &ng.NGResponse{
 		Result:  ng.ResultOK,
-		SDP:     req.SDP,
+		SDP:     responseSDP,
 		CallID:  req.CallID,
 		FromTag: req.FromTag,
 		ToTag:   req.ToTag,
+		Streams: streams,
 	}, nil
 }
 
@@ -743,4 +828,458 @@ func (l *NGSocketListener) findSession(req *ng.NGRequest) *MediaSession {
 		}
 	}
 	return session
+}
+
+// parsedSDPInfo holds parsed SDP information for internal use
+type parsedSDPInfo struct {
+	MediaType    string
+	MediaPort    int
+	Protocol     string
+	ConnectionIP string
+	HasICE       bool
+	ICEUfrag     string
+	ICEPwd       string
+	HasDTLS      bool
+	Fingerprint  string
+	Setup        string
+	HasSRTP      bool
+	CryptoSuite  string
+	CryptoKey    string
+	RTCPMux      bool
+	Direction    string
+	Codecs       []sdpCodecInfo
+}
+
+type sdpCodecInfo struct {
+	PayloadType uint8
+	Name        string
+	ClockRate   uint32
+	Channels    int
+	Fmtp        string
+}
+
+// parseSDP parses an SDP string and extracts relevant information
+func (l *NGSocketListener) parseSDP(sdp string) (*parsedSDPInfo, error) {
+	parsed := &parsedSDPInfo{
+		MediaType: "audio",
+		Protocol:  "RTP/AVP",
+		Direction: "sendrecv",
+		Codecs:    make([]sdpCodecInfo, 0),
+	}
+
+	lines := splitSDPLines(sdp)
+	var payloadTypes []int
+
+	for _, line := range lines {
+		if len(line) < 2 || line[1] != '=' {
+			continue
+		}
+
+		lineType := line[0]
+		value := line[2:]
+
+		switch lineType {
+		case 'c':
+			// c=IN IP4 <ip>
+			parts := splitFields(value)
+			if len(parts) >= 3 {
+				parsed.ConnectionIP = parts[2]
+				if idx := indexOf(parsed.ConnectionIP, "/"); idx != -1 {
+					parsed.ConnectionIP = parsed.ConnectionIP[:idx]
+				}
+			}
+
+		case 'm':
+			// m=<media> <port> <proto> <fmt> ...
+			parts := splitFields(value)
+			if len(parts) >= 4 {
+				parsed.MediaType = parts[0]
+				parsed.MediaPort = parseInt(parts[1])
+				parsed.Protocol = parts[2]
+				for _, pt := range parts[3:] {
+					if ptInt := parseInt(pt); ptInt >= 0 {
+						payloadTypes = append(payloadTypes, ptInt)
+					}
+				}
+			}
+
+		case 'a':
+			l.parseSDPAttribute(value, parsed)
+		}
+	}
+
+	// Add static codecs for payload types without rtpmap
+	l.fillStaticCodecs(parsed, payloadTypes)
+
+	return parsed, nil
+}
+
+// parseSDPAttribute parses an SDP attribute line
+func (l *NGSocketListener) parseSDPAttribute(value string, parsed *parsedSDPInfo) {
+	colonIdx := indexOf(value, ":")
+	attrName := value
+	attrValue := ""
+	if colonIdx != -1 {
+		attrName = value[:colonIdx]
+		attrValue = value[colonIdx+1:]
+	}
+
+	switch attrName {
+	case "rtpmap":
+		// a=rtpmap:<pt> <encoding>/<clock>[/<channels>]
+		parts := splitFields(attrValue)
+		if len(parts) >= 2 {
+			pt := parseInt(parts[0])
+			codecParts := splitBy(parts[1], "/")
+			if len(codecParts) >= 2 {
+				codec := sdpCodecInfo{
+					PayloadType: uint8(pt),
+					Name:        codecParts[0],
+					ClockRate:   uint32(parseInt(codecParts[1])),
+					Channels:    1,
+				}
+				if len(codecParts) >= 3 {
+					codec.Channels = parseInt(codecParts[2])
+				}
+				parsed.Codecs = append(parsed.Codecs, codec)
+			}
+		}
+
+	case "fmtp":
+		parts := splitFields(attrValue)
+		if len(parts) >= 2 {
+			pt := parseInt(parts[0])
+			fmtp := attrValue[len(parts[0])+1:]
+			for i := range parsed.Codecs {
+				if int(parsed.Codecs[i].PayloadType) == pt {
+					parsed.Codecs[i].Fmtp = fmtp
+					break
+				}
+			}
+		}
+
+	case "ice-ufrag":
+		parsed.HasICE = true
+		parsed.ICEUfrag = attrValue
+
+	case "ice-pwd":
+		parsed.HasICE = true
+		parsed.ICEPwd = attrValue
+
+	case "fingerprint":
+		parsed.HasDTLS = true
+		parsed.Fingerprint = attrValue
+
+	case "setup":
+		parsed.Setup = attrValue
+
+	case "crypto":
+		parsed.HasSRTP = true
+		// Parse: <tag> <suite> inline:<key>
+		parts := splitFields(attrValue)
+		if len(parts) >= 3 {
+			parsed.CryptoSuite = parts[1]
+			if hasPrefix(parts[2], "inline:") {
+				parsed.CryptoKey = parts[2][7:]
+			}
+		}
+
+	case "rtcp-mux":
+		parsed.RTCPMux = true
+
+	case "sendrecv", "sendonly", "recvonly", "inactive":
+		parsed.Direction = attrName
+	}
+}
+
+// fillStaticCodecs adds codec info for well-known static payload types
+func (l *NGSocketListener) fillStaticCodecs(parsed *parsedSDPInfo, payloadTypes []int) {
+	existing := make(map[uint8]bool)
+	for _, c := range parsed.Codecs {
+		existing[c.PayloadType] = true
+	}
+
+	staticCodecs := map[int]sdpCodecInfo{
+		0:  {PayloadType: 0, Name: "PCMU", ClockRate: 8000, Channels: 1},
+		8:  {PayloadType: 8, Name: "PCMA", ClockRate: 8000, Channels: 1},
+		9:  {PayloadType: 9, Name: "G722", ClockRate: 8000, Channels: 1},
+		18: {PayloadType: 18, Name: "G729", ClockRate: 8000, Channels: 1},
+	}
+
+	for _, pt := range payloadTypes {
+		if !existing[uint8(pt)] {
+			if codec, ok := staticCodecs[pt]; ok {
+				parsed.Codecs = append(parsed.Codecs, codec)
+			}
+		}
+	}
+}
+
+// buildResponseSDP builds an SDP response with Karl's address and ports
+func (l *NGSocketListener) buildResponseSDP(parsed *parsedSDPInfo, localIP string, rtpPort int, flags []string) string {
+	var sb []byte
+
+	// Check flags
+	removeICE := containsFlag(flags, "ICE=remove")
+	forceICE := containsFlag(flags, "ICE=force")
+	replaceOrigin := containsFlag(flags, "replace-origin")
+	replaceConnection := containsFlag(flags, "replace-session-connection")
+
+	// Version
+	sb = append(sb, "v=0\r\n"...)
+
+	// Origin
+	sb = append(sb, "o=karl 1 1 IN IP4 "...)
+	sb = append(sb, localIP...)
+	sb = append(sb, "\r\n"...)
+
+	// Session name
+	sb = append(sb, "s=Karl Media Server\r\n"...)
+
+	// Connection
+	if replaceConnection || replaceOrigin {
+		sb = append(sb, "c=IN IP4 "...)
+		sb = append(sb, localIP...)
+		sb = append(sb, "\r\n"...)
+	} else if parsed.ConnectionIP != "" {
+		sb = append(sb, "c=IN IP4 "...)
+		sb = append(sb, parsed.ConnectionIP...)
+		sb = append(sb, "\r\n"...)
+	} else {
+		sb = append(sb, "c=IN IP4 "...)
+		sb = append(sb, localIP...)
+		sb = append(sb, "\r\n"...)
+	}
+
+	// Timing
+	sb = append(sb, "t=0 0\r\n"...)
+
+	// Media line
+	protocol := l.determineProtocol(parsed, flags)
+	sb = append(sb, "m="...)
+	sb = append(sb, parsed.MediaType...)
+	sb = append(sb, " "...)
+	sb = append(sb, intToString(rtpPort)...)
+	sb = append(sb, " "...)
+	sb = append(sb, protocol...)
+
+	for _, c := range parsed.Codecs {
+		sb = append(sb, " "...)
+		sb = append(sb, intToString(int(c.PayloadType))...)
+	}
+	sb = append(sb, "\r\n"...)
+
+	// rtpmap and fmtp for each codec
+	for _, c := range parsed.Codecs {
+		sb = append(sb, "a=rtpmap:"...)
+		sb = append(sb, intToString(int(c.PayloadType))...)
+		sb = append(sb, " "...)
+		sb = append(sb, c.Name...)
+		sb = append(sb, "/"...)
+		sb = append(sb, intToString(int(c.ClockRate))...)
+		if c.Channels > 1 {
+			sb = append(sb, "/"...)
+			sb = append(sb, intToString(c.Channels)...)
+		}
+		sb = append(sb, "\r\n"...)
+
+		if c.Fmtp != "" {
+			sb = append(sb, "a=fmtp:"...)
+			sb = append(sb, intToString(int(c.PayloadType))...)
+			sb = append(sb, " "...)
+			sb = append(sb, c.Fmtp...)
+			sb = append(sb, "\r\n"...)
+		}
+	}
+
+	// Direction
+	sb = append(sb, "a="...)
+	sb = append(sb, parsed.Direction...)
+	sb = append(sb, "\r\n"...)
+
+	// RTCP-mux
+	if parsed.RTCPMux || containsFlag(flags, "rtcp-mux-offer") {
+		sb = append(sb, "a=rtcp-mux\r\n"...)
+	}
+
+	// ICE attributes (unless removing)
+	if !removeICE && (parsed.HasICE || forceICE) {
+		if parsed.ICEUfrag != "" {
+			sb = append(sb, "a=ice-ufrag:"...)
+			sb = append(sb, parsed.ICEUfrag...)
+			sb = append(sb, "\r\n"...)
+		}
+		if parsed.ICEPwd != "" {
+			sb = append(sb, "a=ice-pwd:"...)
+			sb = append(sb, parsed.ICEPwd...)
+			sb = append(sb, "\r\n"...)
+		}
+	}
+
+	// DTLS fingerprint
+	if parsed.HasDTLS && !containsFlag(flags, "DTLS=off") {
+		if parsed.Fingerprint != "" {
+			sb = append(sb, "a=fingerprint:"...)
+			sb = append(sb, parsed.Fingerprint...)
+			sb = append(sb, "\r\n"...)
+		}
+		if parsed.Setup != "" {
+			sb = append(sb, "a=setup:"...)
+			sb = append(sb, parsed.Setup...)
+			sb = append(sb, "\r\n"...)
+		}
+	}
+
+	// SRTP crypto
+	if parsed.HasSRTP && !containsFlag(flags, "SDES=off") && !parsed.HasDTLS {
+		sb = append(sb, "a=crypto:1 "...)
+		sb = append(sb, parsed.CryptoSuite...)
+		sb = append(sb, " inline:"...)
+		sb = append(sb, parsed.CryptoKey...)
+		sb = append(sb, "\r\n"...)
+	}
+
+	return string(sb)
+}
+
+// determineProtocol determines the RTP protocol based on SDP and flags
+func (l *NGSocketListener) determineProtocol(parsed *parsedSDPInfo, flags []string) string {
+	// Check explicit protocol flags
+	for _, flag := range flags {
+		switch flag {
+		case "RTP/AVP":
+			return "RTP/AVP"
+		case "RTP/AVPF":
+			return "RTP/AVPF"
+		case "RTP/SAVP":
+			return "RTP/SAVP"
+		case "RTP/SAVPF":
+			return "RTP/SAVPF"
+		}
+	}
+
+	// Determine based on SDP content
+	if parsed.HasDTLS {
+		return "UDP/TLS/RTP/SAVPF"
+	}
+	if parsed.HasSRTP {
+		return "RTP/SAVP"
+	}
+	return parsed.Protocol
+}
+
+// Helper functions for SDP parsing
+func splitSDPLines(sdp string) []string {
+	// Normalize line endings and split
+	result := make([]string, 0)
+	start := 0
+	for i := 0; i < len(sdp); i++ {
+		if sdp[i] == '\n' {
+			line := sdp[start:i]
+			if len(line) > 0 && line[len(line)-1] == '\r' {
+				line = line[:len(line)-1]
+			}
+			if len(line) > 0 {
+				result = append(result, line)
+			}
+			start = i + 1
+		}
+	}
+	if start < len(sdp) {
+		line := sdp[start:]
+		if len(line) > 0 && line[len(line)-1] == '\r' {
+			line = line[:len(line)-1]
+		}
+		if len(line) > 0 {
+			result = append(result, line)
+		}
+	}
+	return result
+}
+
+func splitFields(s string) []string {
+	result := make([]string, 0)
+	start := 0
+	inField := false
+	for i := 0; i < len(s); i++ {
+		if s[i] == ' ' || s[i] == '\t' {
+			if inField {
+				result = append(result, s[start:i])
+				inField = false
+			}
+		} else {
+			if !inField {
+				start = i
+				inField = true
+			}
+		}
+	}
+	if inField {
+		result = append(result, s[start:])
+	}
+	return result
+}
+
+func splitBy(s, sep string) []string {
+	result := make([]string, 0)
+	start := 0
+	for i := 0; i <= len(s)-len(sep); i++ {
+		if s[i:i+len(sep)] == sep {
+			result = append(result, s[start:i])
+			start = i + len(sep)
+			i += len(sep) - 1
+		}
+	}
+	result = append(result, s[start:])
+	return result
+}
+
+func indexOf(s, substr string) int {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return i
+		}
+	}
+	return -1
+}
+
+func hasPrefix(s, prefix string) bool {
+	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
+}
+
+func parseInt(s string) int {
+	result := 0
+	for _, c := range s {
+		if c >= '0' && c <= '9' {
+			result = result*10 + int(c-'0')
+		} else {
+			break
+		}
+	}
+	return result
+}
+
+func intToString(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	result := make([]byte, 0, 10)
+	for n > 0 {
+		result = append(result, byte('0'+n%10))
+		n /= 10
+	}
+	// Reverse
+	for i, j := 0, len(result)-1; i < j; i, j = i+1, j-1 {
+		result[i], result[j] = result[j], result[i]
+	}
+	return string(result)
+}
+
+func containsFlag(flags []string, flag string) bool {
+	for _, f := range flags {
+		if f == flag {
+			return true
+		}
+	}
+	return false
 }

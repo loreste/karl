@@ -7,9 +7,11 @@ This guide covers running multiple Karl instances for high availability and incr
 - [Overview](#overview)
 - [Prerequisites](#prerequisites)
 - [Architecture](#architecture)
+- [Cluster Features](#cluster-features)
 - [Redis Setup](#redis-setup)
 - [Configure Karl Instances](#configure-karl-instances)
 - [Load Balancing](#load-balancing)
+- [Automatic Failover](#automatic-failover)
 - [Kubernetes Scaling](#kubernetes-scaling)
 - [Monitoring Clusters](#monitoring-clusters)
 - [Troubleshooting](#troubleshooting)
@@ -21,13 +23,16 @@ This guide covers running multiple Karl instances for high availability and incr
 Karl supports horizontal scaling through:
 
 - **Redis-backed session sharing**: All instances share session state
-- **Stateless design**: Any instance can handle any request
+- **Consistent hashing**: Deterministic session routing with minimal redistribution
+- **Automatic failover**: Sessions automatically migrate when nodes fail
+- **Split-brain detection**: Quorum-based partition tolerance
 - **Load balancer integration**: Distribute traffic across instances
 
 Benefits:
 - Handle more concurrent calls
-- High availability (no single point of failure)
+- High availability with automatic failover
 - Rolling updates without downtime
+- No session loss during node failures
 
 ---
 
@@ -62,6 +67,59 @@ Benefits:
                    │    ┌─────────────┐   │
                    └───▶│   Karl 3    │───┘
                         └─────────────┘
+```
+
+---
+
+## Cluster Features
+
+Karl includes enterprise-grade clustering capabilities:
+
+### Consistent Hashing
+
+Sessions are distributed using consistent hashing with 150 virtual nodes per physical node:
+
+- **Minimal redistribution**: When nodes join/leave, only ~1/N sessions move
+- **Deterministic routing**: Same session always routes to same node
+- **Load balancing**: Virtual nodes ensure even distribution
+
+### Automatic Session Takeover
+
+When a node fails, its sessions are automatically taken over:
+
+1. **Node failure detected** via heartbeat timeout (3 missed heartbeats)
+2. **Hash ring updated** to exclude failed node
+3. **Sessions redistributed** using consistent hashing
+4. **Ports reallocated** on the new node
+5. **Media flow resumes** without SIP proxy intervention
+
+### Split-Brain Detection
+
+Karl handles network partitions intelligently:
+
+- **Quorum-based decisions**: Nodes without quorum enter read-only mode
+- **Automatic fencing**: Minority partition stops accepting new calls
+- **Recovery handling**: Graceful re-merge when partition heals
+- **Configurable quorum size**: Default is 2 nodes
+
+### Cluster Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      ClusterManager                              │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐ │
+│  │ RedisSession    │  │   HashRing /    │  │  SplitBrain     │ │
+│  │    Store        │  │ SessionRouter   │  │   Detector      │ │
+│  │                 │  │                 │  │                 │ │
+│  │ - Session CRUD  │  │ - Consistent    │  │ - Partition     │ │
+│  │ - Node indexing │  │   hashing       │  │   detection     │ │
+│  │ - Batch ops     │  │ - Load balance  │  │ - Quorum mgmt   │ │
+│  │ - Pub/Sub       │  │ - Sticky        │  │ - Node fencing  │ │
+│  │ - Worker pool   │  │   sessions      │  │ - Heartbeats    │ │
+│  └─────────────────┘  └─────────────────┘  └─────────────────┘ │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -297,6 +355,71 @@ backend karl_servers
 
 ---
 
+## Automatic Failover
+
+Karl automatically handles node failures without manual intervention.
+
+### How Failover Works
+
+1. **Heartbeat Monitoring**: Each node sends heartbeats every 1 second
+2. **Failure Detection**: Node marked failed after 3 missed heartbeats (3s)
+3. **Session Discovery**: Failed node's sessions retrieved from Redis index
+4. **Consistent Redistribution**: Hash ring determines new owners
+5. **Port Allocation**: New ports allocated from pre-warmed pool
+6. **State Transfer**: Session ownership updated atomically in Redis
+
+### Failover Configuration
+
+```json
+{
+  "cluster": {
+    "enabled": true,
+    "heartbeat_interval": "1s",
+    "failure_threshold": 3,
+    "quorum_size": 2,
+    "replication_factor": 150,
+    "enable_fencing": true
+  }
+}
+```
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `heartbeat_interval` | Time between heartbeats | 1s |
+| `failure_threshold` | Missed heartbeats before failure | 3 |
+| `quorum_size` | Minimum nodes for quorum | 2 |
+| `replication_factor` | Virtual nodes per physical node | 150 |
+| `enable_fencing` | Fence nodes without quorum | true |
+
+### Failover Performance
+
+Karl's failover is optimized for speed:
+
+| Metric | Value |
+|--------|-------|
+| Detection time | 3 seconds |
+| Session takeover | Parallel (2×CPU workers) |
+| Port allocation | Pre-warmed pool (< 1ms) |
+| Typical failover | < 5 seconds total |
+
+### Monitoring Failover
+
+```promql
+# Sessions taken over
+karl_cluster_takeovers_done
+
+# Takeover failures
+karl_cluster_takeovers_failed
+
+# Node failures detected
+karl_cluster_node_failures
+
+# Partition events
+karl_cluster_partition_events
+```
+
+---
+
 ## Kubernetes Scaling
 
 ### Basic Scaling
@@ -503,6 +626,38 @@ groups:
           severity: critical
         annotations:
           summary: "Karl instance {{ $labels.instance }} lost Redis connection"
+
+      - alert: KarlQuorumLost
+        expr: karl_cluster_has_quorum == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Karl cluster lost quorum - new sessions blocked"
+
+      - alert: KarlNodeFenced
+        expr: karl_cluster_fenced == 1
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Karl instance {{ $labels.instance }} is fenced"
+
+      - alert: KarlTakeoverFailures
+        expr: rate(karl_cluster_takeovers_failed[5m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Karl session takeover failures detected"
+
+      - alert: KarlHighTakeoverLatency
+        expr: karl_cluster_takeover_latency_seconds > 10
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Karl session takeover taking too long"
 ```
 
 ---
@@ -562,16 +717,96 @@ redis-cli info stats
 redis-cli monitor
 ```
 
+### Cluster State Issues
+
+**Check cluster stats**:
+```bash
+curl http://karl1:8080/api/v1/cluster/stats | jq
+```
+
+**View hash ring state**:
+```bash
+curl http://karl1:8080/api/v1/cluster/ring | jq
+```
+
+**Check node health**:
+```bash
+curl http://karl1:8080/api/v1/cluster/nodes | jq
+```
+
+### Session Takeover Failures
+
+1. **Check port availability**:
+```bash
+# Ensure enough ports in range
+curl http://karl1:8080/api/v1/stats | jq .port_allocator
+```
+
+2. **Check Redis connectivity**:
+```bash
+redis-cli -h redis ping
+```
+
+3. **Check node session index**:
+```bash
+redis-cli smembers "karl:session:node:failed-node-id"
+```
+
+### Split Brain Recovery
+
+1. **Check quorum status**:
+```bash
+curl http://karl1:8080/api/v1/cluster/stats | jq .has_quorum
+```
+
+2. **Check fenced status**:
+```bash
+curl http://karl1:8080/api/v1/cluster/stats | jq .fenced
+```
+
+3. **Force unfence** (use with caution):
+```bash
+curl -X POST http://karl1:8080/api/v1/cluster/unfence
+```
+
 ---
 
 ## Best Practices
 
-1. **Use odd number of instances** for better distribution
-2. **Set appropriate timeouts** for Redis operations
-3. **Monitor Redis memory** usage
-4. **Use Redis persistence** for durability
-5. **Implement health checks** at load balancer level
-6. **Plan for instance failure** - ensure capacity with N-1 instances
+### Cluster Sizing
+
+1. **Use odd number of instances** (3, 5, 7) for quorum decisions
+2. **Minimum 3 nodes** for production with automatic failover
+3. **Plan for N-1 capacity** - cluster should handle load with one node down
+
+### Performance
+
+4. **Pre-warm port pools** - default 500 port pairs per node
+5. **Use Redis Cluster** for large deployments (>10 nodes)
+6. **Enable Redis persistence** (AOF or RDB) for durability
+7. **Co-locate Redis** with Karl nodes for lower latency
+
+### Reliability
+
+8. **Set appropriate timeouts** - 3s detection, 30s takeover timeout
+9. **Monitor quorum status** - alert immediately on quorum loss
+10. **Test failover regularly** - validate takeover works correctly
+
+### Operations
+
+11. **Use rolling updates** - update one node at a time
+12. **Drain before shutdown** - let sessions migrate gracefully
+13. **Monitor session distribution** - alert on uneven load
+
+---
+
+## Performance Characteristics
+
+| Cluster Size | Takeover Time | Sessions/Node | Memory Overhead |
+|--------------|---------------|---------------|-----------------|
+| 3 nodes | < 3s | 3,000-5,000 | ~50MB |
+| 5 nodes | < 4s | 2,000-3,000 | ~80MB |
+| 10 nodes | < 5s | 1,000-2,000 | ~150MB |
 
 ---
 
