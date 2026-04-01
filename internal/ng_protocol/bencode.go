@@ -51,10 +51,25 @@ func (e *Encoder) encode(v interface{}) error {
 		return e.encodeInt(int64(val))
 	case int64:
 		return e.encodeInt(val)
+	case int32:
+		return e.encodeInt(int64(val))
+	case uint:
+		return e.encodeInt(int64(val))
 	case uint32:
 		return e.encodeInt(int64(val))
 	case uint64:
 		return e.encodeInt(int64(val))
+	case float32:
+		// Bencode doesn't support floats, encode as string
+		return e.encodeString(strconv.FormatFloat(float64(val), 'f', -1, 32))
+	case float64:
+		// Bencode doesn't support floats, encode as string
+		return e.encodeString(strconv.FormatFloat(val, 'f', -1, 64))
+	case bool:
+		if val {
+			return e.encodeInt(1)
+		}
+		return e.encodeInt(0)
 	case string:
 		return e.encodeString(val)
 	case []byte:
