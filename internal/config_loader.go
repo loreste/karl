@@ -165,106 +165,90 @@ func ApplyNewConfig(newConfig Config) error {
 	return nil
 }
 
-// These functions are implemented elsewhere
-// They are declared here as variables to allow for easier unit testing
-// through dependency injection when needed
-
-// Forward declarations for functions from other files
-// These are needed to allow updates to be called from the config loader
-
-// In real implementation these would be imported from their respective packages
-// For testing purposes during development, we use stub declarations here
+// Dynamic configuration update functions
+//
+// Note: These functions are intentionally simplified because the RTP/transport
+// listeners in rtp_transport.go are blocking functions designed to run for the
+// lifetime of the server. Full dynamic reconfiguration would require:
+// 1. A listener manager that tracks running listeners
+// 2. Stopping existing listeners gracefully
+// 3. Starting new listeners in goroutines
+//
+// For now, transport settings changes require a server restart to take effect.
+// The functions below log the changes for monitoring but don't restart listeners.
 func updateTransportSettings(transport TransportConfig) error {
-	log.Printf("Updating transport settings (UDP: %v, TCP: %v, TLS: %v)",
-		transport.UDPEnabled, transport.TCPEnabled, transport.TLSEnabled)
+	log.Printf("Transport settings updated (UDP: %v port %d, TCP: %v port %d, TLS: %v port %d)",
+		transport.UDPEnabled, transport.UDPPort,
+		transport.TCPEnabled, transport.TCPPort,
+		transport.TLSEnabled, transport.TLSPort)
 
-	// These function calls are now commented out since they are properly implemented elsewhere
-	// and we were getting duplicate declarations
-	/*
-		if transport.UDPEnabled {
-			StartRTPUDPListener(strconv.Itoa(transport.UDPPort))
-		} else {
-			StopRTPListener(strconv.Itoa(transport.UDPPort))
-		}
-
-		if transport.TCPEnabled {
-			StartRTPTCPListener(strconv.Itoa(transport.TCPPort))
-		} else {
-			StopRTPListener(strconv.Itoa(transport.TCPPort))
-		}
-
-		if transport.TLSEnabled {
-			StartRTPTLSListener(
-				strconv.Itoa(transport.TLSPort),
-				transport.TLSCert,
-				transport.TLSKey,
-			)
-		} else {
-			StopRTPListener(strconv.Itoa(transport.TLSPort))
-		}
-	*/
+	// Note: Actual transport listener changes require server restart.
+	// The listeners (StartRTPUDPListener, etc.) are blocking functions
+	// that run for the lifetime of the server.
 
 	return nil
 }
 
 func updateWebRTCSettings(webrtc WebRTCConfig) error {
 	if !webrtc.Enabled {
+		log.Printf("WebRTC settings: disabled")
 		return nil
 	}
 
-	// StartWebRTCSession is implemented in webrtc_handler.go
-	// This call is commented out to avoid calling the function directly
-	// since it's properly implemented elsewhere
-	// StartWebRTCSession()
+	log.Printf("WebRTC settings updated (ICE servers: %d, recording: %v)",
+		len(webrtc.StunServers), webrtc.RecordingEnabled)
 
-	if webrtc.RecordingEnabled {
+	// Ensure recording directory exists if recording is enabled
+	if webrtc.RecordingEnabled && webrtc.RecordingPath != "" {
 		if err := os.MkdirAll(webrtc.RecordingPath, 0755); err != nil {
 			return fmt.Errorf("failed to create recording directory: %w", err)
 		}
+		log.Printf("WebRTC recording directory: %s", webrtc.RecordingPath)
 	}
 
 	return nil
 }
 
 func updateRTPSettings(settings RTPSettings) error {
-	// These function calls are now commented out since they are properly implemented elsewhere
-	// and we were getting duplicate declarations
+	log.Printf("RTP settings updated (jitter buffer: %dms, bandwidth: %d, FEC: %v, PCAP: %v, RTCP interval: %d)",
+		settings.MinJitterBuffer,
+		settings.MaxBandwidth, settings.FECEnabled,
+		settings.EnablePCAP, settings.RTCPInterval)
 
-	log.Printf("Updating RTP settings (PCAP: %v, FEC: %v, RTCP: %d)",
-		settings.EnablePCAP, settings.FECEnabled, settings.RTCPInterval)
-
-	/*
-		if settings.EnablePCAP {
-			InitPCAPCapture()
-		}
-
-		if settings.FECEnabled {
-			initializeFEC()
-		}
-
-		if settings.RTCPInterval > 0 {
-			updateRTCPInterval(settings.RTCPInterval)
-		}
-	*/
+	// These settings are applied to new sessions automatically.
+	// Existing sessions continue with their original settings.
+	// PCAP capture and FEC are initialized at server startup.
 
 	return nil
 }
 
 func updateIntegrationSettings(integration IntegrationConfig) error {
-	// Continue to call RegisterWithSIPProxy since it's part of sip_register.go and not conflicting
-	if err := RegisterWithSIPProxy(integration.OpenSIPSIp, integration.OpenSIPSPort); err != nil {
-		log.Printf("Failed to register with OpenSIPS: %v", err)
+	log.Printf("Integration settings updated (Media IP: %s, Public IP: %s)",
+		integration.MediaIP, integration.PublicIP)
+
+	// Re-register with SIP proxies if configured
+	if integration.OpenSIPSIp != "" && integration.OpenSIPSPort > 0 {
+		if err := RegisterWithSIPProxy(integration.OpenSIPSIp, integration.OpenSIPSPort); err != nil {
+			log.Printf("Failed to register with OpenSIPS at %s:%d: %v",
+				integration.OpenSIPSIp, integration.OpenSIPSPort, err)
+		} else {
+			log.Printf("Registered with OpenSIPS at %s:%d", integration.OpenSIPSIp, integration.OpenSIPSPort)
+		}
 	}
 
-	if err := RegisterWithSIPProxy(integration.KamailioIp, integration.KamailioPort); err != nil {
-		log.Printf("Failed to register with Kamailio: %v", err)
+	if integration.KamailioIp != "" && integration.KamailioPort > 0 {
+		if err := RegisterWithSIPProxy(integration.KamailioIp, integration.KamailioPort); err != nil {
+			log.Printf("Failed to register with Kamailio at %s:%d: %v",
+				integration.KamailioIp, integration.KamailioPort, err)
+		} else {
+			log.Printf("Registered with Kamailio at %s:%d", integration.KamailioIp, integration.KamailioPort)
+		}
 	}
 
-	// setupFailover is commented out since it's implemented elsewhere
+	// Log failover configuration
 	if integration.FailoverEnabled && integration.BackupMediaIP != "" {
-		log.Printf("Setting up failover from %s to %s",
+		log.Printf("Failover configured: primary %s, backup %s",
 			integration.MediaIP, integration.BackupMediaIP)
-		// setupFailover(integration.MediaIP, integration.BackupMediaIP)
 	}
 
 	return nil

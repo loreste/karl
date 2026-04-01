@@ -543,9 +543,10 @@ func NewWAVWriter(w io.WriteSeeker, sampleRate, bitsPerSample, channels int) *WA
 	}
 }
 
-// WriteHeader writes the WAV header
+// WriteHeader writes the WAV header (44 bytes standard RIFF/WAVE header)
+// The file size and data size fields are written as 0 initially and
+// updated in Finalize() once all audio data has been written.
 func (w *WAVWriter) WriteHeader() error {
-	// Write placeholder header
 	header := make([]byte, 44)
 
 	// RIFF header

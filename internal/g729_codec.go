@@ -1,7 +1,6 @@
 package internal
 
 import (
-	"encoding/binary"
 	"errors"
 	"sync"
 )
@@ -131,31 +130,82 @@ func (e *G729Encoder) Encode(pcm []int16) ([]byte, error) {
 }
 
 // encodeFrame encodes a single G.729 frame
-// This is a simplified implementation - real bcg729 would do actual compression
+// This is a pure-Go approximation that preserves audio characteristics.
+// Real G.729 uses CELP (Code Excited Linear Prediction) with LSP, adaptive
+// codebook, fixed codebook, and gains - requiring CGO to bcg729 or similar.
+// This implementation extracts key parameters for reconstruction.
 func (e *G729Encoder) encodeFrame(pcm []int16) []byte {
 	frame := make([]byte, G729FrameSize)
 
-	// Simplified encoding: convert PCM to compressed representation
-	// Real G.729 uses CELP (Code Excited Linear Prediction)
-	// This creates a placeholder that maintains frame structure
-
-	// Calculate basic parameters for the frame
+	// Extract energy (log scale, 6 bits)
 	var energy int64
 	for _, sample := range pcm {
 		energy += int64(sample) * int64(sample)
 	}
 	avgEnergy := energy / int64(len(pcm))
+	logEnergy := byte(0)
+	if avgEnergy > 0 {
+		// Log scale compression: 6 bits covers ~96dB dynamic range
+		for shift := uint(0); shift < 32 && avgEnergy > 0; shift++ {
+			logEnergy = byte(shift)
+			avgEnergy >>= 2
+		}
+	}
 
-	// Pack simplified parameters into frame
-	// Real G.729 would have LSP, adaptive codebook, fixed codebook, gains
-	binary.LittleEndian.PutUint32(frame[0:4], uint32(avgEnergy>>16))
+	// Extract pitch period estimate (simplified autocorrelation peak)
+	// Search for periodicity in 20-147 sample range (50-400 Hz for 8kHz)
+	bestPitch := byte(80) // Default ~100Hz
+	var bestCorr int64
+	for lag := 20; lag < 80 && lag < len(pcm)/2; lag++ {
+		var corr int64
+		for i := 0; i < len(pcm)-lag; i++ {
+			corr += int64(pcm[i]) * int64(pcm[i+lag])
+		}
+		if corr > bestCorr {
+			bestCorr = corr
+			bestPitch = byte(lag)
+		}
+	}
 
-	// Add checksum-like bytes for frame validation
+	// Extract spectral tilt (high vs low frequency energy ratio)
+	var highEnergy, lowEnergy int64
+	for i, sample := range pcm {
+		e := int64(sample) * int64(sample)
+		if i%2 == 0 {
+			lowEnergy += e
+		} else {
+			highEnergy += e
+		}
+	}
+	var tilt byte
+	if lowEnergy > 0 {
+		ratio := (highEnergy * 64) / lowEnergy
+		if ratio > 255 {
+			ratio = 255
+		}
+		tilt = byte(ratio)
+	}
+
+	// Pack parameters into 10-byte frame
+	// Byte 0: log energy (6 bits) + flags (2 bits)
+	frame[0] = logEnergy & 0x3F
+	// Byte 1: pitch period
+	frame[1] = bestPitch
+	// Byte 2: spectral tilt
+	frame[2] = tilt
+	// Bytes 3-8: subsampled waveform (6 samples covering the frame)
+	for i := 0; i < 6; i++ {
+		idx := (i * len(pcm)) / 6
+		sample := pcm[idx]
+		// Quantize to 8 bits
+		frame[3+i] = byte((int(sample) + 32768) >> 8)
+	}
+	// Byte 9: checksum for validation
 	var sum byte
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 9; i++ {
 		sum ^= frame[i]
 	}
-	frame[4] = sum
+	frame[9] = sum
 
 	return frame
 }
@@ -291,41 +341,85 @@ func (d *G729Decoder) DecodePLC() ([]int16, error) {
 }
 
 // decodeFrame decodes a single G.729 frame
-// This is a simplified implementation - real bcg729 would do actual decompression
+// This is a pure-Go approximation that reconstructs audio from extracted parameters.
+// Real G.729 uses CELP synthesis with LSP interpolation and codebook excitation.
+// This implementation uses the encoded parameters for waveform synthesis.
 func (d *G729Decoder) decodeFrame(g729Data []byte) []int16 {
 	output := make([]int16, G729FrameSamples)
 
-	// Simplified decoding - real G.729 uses CELP synthesis
-	// This creates a placeholder with basic reconstruction
-
-	if len(g729Data) < 5 {
+	if len(g729Data) < G729FrameSize {
 		return output
 	}
-
-	// Extract energy parameter
-	energy := binary.LittleEndian.Uint32(g729Data[0:4])
 
 	// Verify checksum
 	var sum byte
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 9; i++ {
 		sum ^= g729Data[i]
 	}
-	if sum != g729Data[4] {
-		// Bad frame, return silence
-		return output
+	if sum != g729Data[9] {
+		// Bad frame, use PLC
+		return d.lastFrame
 	}
 
-	// Reconstruct PCM (simplified)
-	amplitude := int16(energy >> 8)
-	if amplitude > 16384 {
-		amplitude = 16384
+	// Extract parameters
+	logEnergy := g729Data[0] & 0x3F
+	pitch := int(g729Data[1])
+	if pitch < 20 {
+		pitch = 80 // Default pitch
+	}
+	tilt := g729Data[2]
+
+	// Calculate amplitude from log energy
+	amplitude := int32(1) << (logEnergy / 2)
+	if amplitude > 32000 {
+		amplitude = 32000
 	}
 
-	// Generate basic waveform
+	// Extract subsampled waveform
+	var subsample [6]int16
+	for i := 0; i < 6; i++ {
+		subsample[i] = int16((int(g729Data[3+i]) << 8) - 32768)
+	}
+
+	// Synthesize output using pitch-based excitation and interpolated waveform
 	for i := 0; i < G729FrameSamples; i++ {
-		// Simple reconstruction - real decoder would use LSP, codebooks
-		output[i] = amplitude
-		amplitude = -amplitude // Simple oscillation
+		// Interpolate from subsampled waveform
+		pos := float64(i) * 5.0 / float64(G729FrameSamples)
+		idx := int(pos)
+		if idx >= 5 {
+			idx = 4
+		}
+		frac := pos - float64(idx)
+
+		// Linear interpolation between subsample points
+		var sample int32
+		if idx < 5 {
+			sample = int32(float64(subsample[idx])*(1-frac) + float64(subsample[idx+1])*frac)
+		} else {
+			sample = int32(subsample[idx])
+		}
+
+		// Apply energy scaling
+		sample = (sample * amplitude) / 32768
+
+		// Apply pitch-based modulation for voiced sounds
+		if pitch > 0 && pitch < G729FrameSamples {
+			pitchMod := int32(1000 + 500*((i%pitch)*2/pitch-1))
+			sample = (sample * pitchMod) / 1000
+		}
+
+		// Apply spectral tilt (simple low-pass approximation)
+		if tilt < 32 && i > 0 {
+			sample = (sample + int32(output[i-1])) / 2
+		}
+
+		// Clamp to int16 range
+		if sample > 32767 {
+			sample = 32767
+		} else if sample < -32768 {
+			sample = -32768
+		}
+		output[i] = int16(sample)
 	}
 
 	return output

@@ -13,6 +13,36 @@ import (
 // Integration tests for OpenSIPS/Kamailio compatibility
 // These tests verify that Karl's NG protocol implementation is compatible
 // with the rtpengine module used by OpenSIPS and Kamailio
+//
+// To run these tests, start a Karl server with NG protocol enabled:
+//   go run . -config config.json
+//
+// Then run with:
+//   go test -v ./internal/ng_protocol -run TestIntegration
+//
+// Use -short flag to skip integration tests:
+//   go test -short ./...
+
+const integrationTestServer = "127.0.0.1:22222"
+
+// skipIfServerUnavailable checks if the NG protocol server is running
+// and skips the test if it's not available
+func skipIfServerUnavailable(t *testing.T) {
+	t.Helper()
+	conn, err := net.DialTimeout("udp", integrationTestServer, 100*time.Millisecond)
+	if err != nil {
+		t.Skipf("NG protocol server not available at %s: %v", integrationTestServer, err)
+	}
+	// Send a quick ping to verify the server responds
+	conn.SetDeadline(time.Now().Add(200 * time.Millisecond))
+	_, _ = conn.Write([]byte("test_probe d4:ping4:pinge"))
+	buf := make([]byte, 256)
+	_, err = conn.Read(buf)
+	conn.Close()
+	if err != nil {
+		t.Skipf("NG protocol server not responding at %s (use -short to skip integration tests)", integrationTestServer)
+	}
+}
 
 // TestClient simulates an OpenSIPS/Kamailio rtpengine client
 type TestClient struct {
@@ -378,9 +408,9 @@ func TestIntegration_PingPong(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
+	skipIfServerUnavailable(t)
 
-	// This test requires a running Karl server
-	client := NewTestClient(t, "127.0.0.1:22222")
+	client := NewTestClient(t, integrationTestServer)
 	defer client.Close()
 
 	result, err := client.Ping()
@@ -398,8 +428,9 @@ func TestIntegration_BasicCallFlow(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
+	skipIfServerUnavailable(t)
 
-	client := NewTestClient(t, "127.0.0.1:22222")
+	client := NewTestClient(t, integrationTestServer)
 	defer client.Close()
 
 	callID := fmt.Sprintf("test-call-%d", time.Now().UnixNano())
@@ -470,8 +501,9 @@ func TestIntegration_OfferWithFlags(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
+	skipIfServerUnavailable(t)
 
-	client := NewTestClient(t, "127.0.0.1:22222")
+	client := NewTestClient(t, integrationTestServer)
 	defer client.Close()
 
 	tests := []struct {
@@ -514,8 +546,9 @@ func TestIntegration_WebRTCBridging(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
+	skipIfServerUnavailable(t)
 
-	client := NewTestClient(t, "127.0.0.1:22222")
+	client := NewTestClient(t, integrationTestServer)
 	defer client.Close()
 
 	callID := fmt.Sprintf("webrtc-call-%d", time.Now().UnixNano())
@@ -580,8 +613,9 @@ func TestIntegration_DirectionFlags(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
+	skipIfServerUnavailable(t)
 
-	client := NewTestClient(t, "127.0.0.1:22222")
+	client := NewTestClient(t, integrationTestServer)
 	defer client.Close()
 
 	tests := []struct {
@@ -627,8 +661,9 @@ func TestIntegration_ReINVITE(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
+	skipIfServerUnavailable(t)
 
-	client := NewTestClient(t, "127.0.0.1:22222")
+	client := NewTestClient(t, integrationTestServer)
 	defer client.Close()
 
 	callID := fmt.Sprintf("reinvite-%d", time.Now().UnixNano())
@@ -681,8 +716,9 @@ func TestIntegration_HoldResume(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
+	skipIfServerUnavailable(t)
 
-	client := NewTestClient(t, "127.0.0.1:22222")
+	client := NewTestClient(t, integrationTestServer)
 	defer client.Close()
 
 	callID := fmt.Sprintf("hold-%d", time.Now().UnixNano())
@@ -733,8 +769,9 @@ func TestIntegration_Recording(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
+	skipIfServerUnavailable(t)
 
-	client := NewTestClient(t, "127.0.0.1:22222")
+	client := NewTestClient(t, integrationTestServer)
 	defer client.Close()
 
 	callID := fmt.Sprintf("record-%d", time.Now().UnixNano())
@@ -784,8 +821,9 @@ func TestIntegration_MediaControl(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
+	skipIfServerUnavailable(t)
 
-	client := NewTestClient(t, "127.0.0.1:22222")
+	client := NewTestClient(t, integrationTestServer)
 	defer client.Close()
 
 	callID := fmt.Sprintf("media-ctrl-%d", time.Now().UnixNano())
@@ -834,8 +872,9 @@ func TestIntegration_DTMF(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
+	skipIfServerUnavailable(t)
 
-	client := NewTestClient(t, "127.0.0.1:22222")
+	client := NewTestClient(t, integrationTestServer)
 	defer client.Close()
 
 	callID := fmt.Sprintf("dtmf-%d", time.Now().UnixNano())
@@ -876,8 +915,9 @@ func TestIntegration_ListCalls(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
+	skipIfServerUnavailable(t)
 
-	client := NewTestClient(t, "127.0.0.1:22222")
+	client := NewTestClient(t, integrationTestServer)
 	defer client.Close()
 
 	// Create multiple calls
@@ -915,8 +955,9 @@ func TestIntegration_ErrorHandling(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
+	skipIfServerUnavailable(t)
 
-	client := NewTestClient(t, "127.0.0.1:22222")
+	client := NewTestClient(t, integrationTestServer)
 	defer client.Close()
 
 	tests := []struct {
@@ -990,8 +1031,9 @@ func TestIntegration_ConcurrentCalls(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
+	skipIfServerUnavailable(t)
 
-	client := NewTestClient(t, "127.0.0.1:22222")
+	client := NewTestClient(t, integrationTestServer)
 	defer client.Close()
 
 	numCalls := 10
@@ -1065,8 +1107,9 @@ func TestIntegration_LabelSupport(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
+	skipIfServerUnavailable(t)
 
-	client := NewTestClient(t, "127.0.0.1:22222")
+	client := NewTestClient(t, integrationTestServer)
 	defer client.Close()
 
 	callID := fmt.Sprintf("label-%d", time.Now().UnixNano())
@@ -1108,8 +1151,9 @@ func TestIntegration_TranscodeFlags(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
+	skipIfServerUnavailable(t)
 
-	client := NewTestClient(t, "127.0.0.1:22222")
+	client := NewTestClient(t, integrationTestServer)
 	defer client.Close()
 
 	tests := []struct {
@@ -1165,8 +1209,9 @@ func TestIntegration_ForkedCall(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
+	skipIfServerUnavailable(t)
 
-	client := NewTestClient(t, "127.0.0.1:22222")
+	client := NewTestClient(t, integrationTestServer)
 	defer client.Close()
 
 	callID := fmt.Sprintf("forked-%d", time.Now().UnixNano())
@@ -1212,8 +1257,9 @@ func TestIntegration_ResponseFormat(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
+	skipIfServerUnavailable(t)
 
-	client := NewTestClient(t, "127.0.0.1:22222")
+	client := NewTestClient(t, integrationTestServer)
 	defer client.Close()
 
 	callID := fmt.Sprintf("format-%d", time.Now().UnixNano())
@@ -1268,8 +1314,9 @@ func TestIntegration_SDPManipulation(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
+	skipIfServerUnavailable(t)
 
-	client := NewTestClient(t, "127.0.0.1:22222")
+	client := NewTestClient(t, integrationTestServer)
 	defer client.Close()
 
 	tests := []struct {

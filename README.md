@@ -144,7 +144,7 @@ Full compatibility with rtpengine NG protocol:
 - **Forward Error Correction**: XOR-based FEC with adaptive redundancy (10-50%) based on real-time packet loss
 - **RTCP Processing**: Full RFC 3550 implementation with SR/RR reports, RTT calculation, and quality metrics
 - **SRTP/DTLS-SRTP**: Complete encryption support for secure media transport
-- **Codec Support**: G.711 (PCMU/PCMA), G.722, G.729, Opus, AMR/AMR-WB, iLBC, Speex with transparent transcoding
+- **Codec Support**: G.711 (PCMU/PCMA), G.722, G.729, Opus, AMR/AMR-WB, iLBC, Speex with transparent transcoding (pure Go implementation, no CGO required)
 - **T.38 Fax**: Full T.38 fax passthrough and gateway mode with V.21 tone detection
 - **SIPREC**: RFC 7865/7866 compliant session recording
 

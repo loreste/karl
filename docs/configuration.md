@@ -31,6 +31,25 @@ Karl looks for configuration in the following order:
 2. Path specified via `KARL_CONFIG_PATH` environment variable
 3. Default: `./config/config.json`
 
+## Dynamic Configuration Updates
+
+Karl monitors the configuration file for changes and automatically reloads certain settings without requiring a restart.
+
+**Settings that apply immediately:**
+- WebRTC settings (STUN/TURN servers, recording path)
+- Recording settings (retention, format)
+- Alert thresholds
+- Integration settings (SIP proxy registration)
+- RTP quality settings (applied to new sessions)
+
+**Settings that require a restart:**
+- Transport settings (UDP/TCP/TLS ports and listeners)
+- NG protocol port
+- Session port ranges
+- Database connection settings
+
+When configuration changes are detected, Karl logs the applied changes. Check the logs to verify updates took effect.
+
 ---
 
 ## Complete Configuration Example
