@@ -15,7 +15,7 @@ This document provides guidance for developers who want to contribute to the Kar
 
 ### Prerequisites
 
-- Go 1.23.2 or higher
+- Go 1.26 or higher
 - Git
 - MySQL/MariaDB
 - Redis (optional)

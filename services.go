@@ -7,6 +7,8 @@ import (
 
 	"karl/internal"
 	"karl/internal/api"
+	ng "karl/internal/ng_protocol"
+	"karl/internal/ng_protocol/commands"
 	"karl/internal/recording"
 )
 
@@ -17,11 +19,6 @@ func (k *KarlServer) initializeServices() error {
 
 	// Initialize Session Registry
 	if err := k.initializeSessionRegistry(); err != nil {
-		return err
-	}
-
-	// Initialize RTP Engine
-	if err := k.startRTPEngine(); err != nil {
 		return err
 	}
 
@@ -82,7 +79,11 @@ func (k *KarlServer) initializeSessionRegistry() error {
 		sessionTTL = time.Duration(config.Sessions.SessionTTL) * time.Second
 	}
 
-	k.sessionRegistry = internal.NewSessionRegistry(sessionTTL)
+	var opts []func(*internal.SessionRegistry)
+	if config.Sessions != nil && config.Sessions.MaxSessions > 0 {
+		opts = append(opts, internal.WithMaxSessions(config.Sessions.MaxSessions))
+	}
+	k.sessionRegistry = internal.NewSessionRegistry(sessionTTL, opts...)
 
 	// Set callback for session termination metrics
 	k.sessionRegistry.SetOnSessionEnd(func(session *internal.MediaSession) {
@@ -168,6 +169,24 @@ func (k *KarlServer) initializeNGSocketListener() error {
 	}
 
 	k.ngListener = internal.NewNGSocketListener(config, k.sessionRegistry)
+
+	// Wire the proper commands/ handlers (offer, answer) which create real
+	// CallLegs with UDP sockets and start MediaRelay for forwarding.
+	offerHandler := commands.NewOfferHandler(k.sessionRegistry, config)
+	answerHandler := commands.NewAnswerHandler(k.sessionRegistry, config)
+
+	// Set up recording hook on answer handler if recording is configured
+	if config.Recording != nil && config.Recording.Enabled {
+		answerHandler.SetRecordingManager(k.recordingManager)
+	}
+
+	k.ngListener.RegisterHandler(ng.CmdOffer, func(req *ng.NGRequest) (*ng.NGResponse, error) {
+		return offerHandler.Handle(req)
+	})
+	k.ngListener.RegisterHandler(ng.CmdAnswer, func(req *ng.NGRequest) (*ng.NGResponse, error) {
+		return answerHandler.Handle(req)
+	})
+
 	if err := k.ngListener.Start(); err != nil {
 		return fmt.Errorf("failed to start NG socket listener: %w", err)
 	}
@@ -222,50 +241,8 @@ func (k *KarlServer) initializeRecording() error {
 		return fmt.Errorf("failed to start recording manager: %w", err)
 	}
 
+	k.recordingManager = manager
 	log.Println("Recording system initialized")
-	return nil
-}
-
-// startRTPEngine initializes and starts the RTP engine
-func (k *KarlServer) startRTPEngine() error {
-	k.mu.RLock()
-	config := k.config
-	k.mu.RUnlock()
-
-	if config == nil {
-		return fmt.Errorf("❌ Configuration not loaded")
-	}
-
-	log.Println("🎬 Initializing RTP engine...")
-
-	// Retrieve SRTP key and salt correctly
-	srtpKey := []byte(config.SRTP.Key)
-	srtpSalt := []byte(config.SRTP.Salt)
-
-	// Initialize SRTP Transcoder
-	srtpTranscoder, err := internal.NewSRTPTranscoder(srtpKey, srtpSalt)
-	if err != nil {
-		return fmt.Errorf("❌ Failed to initialize SRTP transcoder: %w", err)
-	}
-
-	// Initialize RTP Control with correct SRTP parameters
-	rtpControl, err := internal.NewRTPControl(srtpKey, srtpSalt)
-	if err != nil {
-		return fmt.Errorf("❌ Failed to initialize RTP Control: %w", err)
-	}
-
-	addr := fmt.Sprintf(":%d", config.Transport.UDPPort)
-	if err := rtpControl.StartRTPListener(addr); err != nil {
-		rtpControl.Stop()
-		return fmt.Errorf("❌ RTP Listener failed to start: %w", err)
-	}
-
-	k.mu.Lock()
-	k.rtpControl = rtpControl
-	k.srtpTranscoder = srtpTranscoder
-	k.mu.Unlock()
-
-	log.Printf("✅ RTP Engine started on UDP port %d", config.Transport.UDPPort)
 	return nil
 }
 

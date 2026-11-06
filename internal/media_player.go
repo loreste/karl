@@ -14,6 +14,7 @@ type MediaPlayer struct {
 	sessions map[string]*PlaybackSession
 	mu       sync.RWMutex
 	stopCh   chan struct{}
+	stopOnce sync.Once
 }
 
 // PlaybackSession represents an active media playback
@@ -175,6 +176,8 @@ func (mp *MediaPlayer) IsPlaying(sessionID string) bool {
 	if !ok {
 		return false
 	}
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
 	return ps.playing && !ps.paused
 }
 
@@ -187,7 +190,7 @@ func (mp *MediaPlayer) Stop() {
 		ps.Stop()
 	}
 	mp.sessions = make(map[string]*PlaybackSession)
-	close(mp.stopCh)
+	mp.stopOnce.Do(func() { close(mp.stopCh) })
 }
 
 // loadAudioFile loads and parses an audio file

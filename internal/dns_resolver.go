@@ -457,10 +457,7 @@ func (r *DNSResolver) testConnectivity(ctx context.Context, record *DNSRecord) b
 	}
 
 	// Try a quick UDP "connect" (doesn't actually send data)
-	addr := fmt.Sprintf("%s:%d", record.IP.String(), record.Port)
-	if record.Family == "ipv6" {
-		addr = fmt.Sprintf("[%s]:%d", record.IP.String(), record.Port)
-	}
+	addr := net.JoinHostPort(record.IP.String(), fmt.Sprintf("%d", record.Port))
 
 	conn, err := net.DialTimeout("udp", addr, 100*time.Millisecond)
 	if err != nil {

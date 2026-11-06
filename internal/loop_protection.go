@@ -98,7 +98,9 @@ func (lp *LoopProtector) generateSignature(ssrc uint32, seq uint16, timestamp ui
 	binary.Write(h, binary.BigEndian, ssrc)
 	binary.Write(h, binary.BigEndian, seq)
 	binary.Write(h, binary.BigEndian, timestamp)
-	h.Write(payload[12:payloadLen])
+	if payloadLen > 12 {
+		h.Write(payload[12:payloadLen])
+	}
 
 	sum := h.Sum(nil)
 	return binary.BigEndian.Uint64(sum[:8])

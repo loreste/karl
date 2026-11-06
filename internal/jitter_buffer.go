@@ -392,11 +392,11 @@ func (jb *JitterBuffer) Flush() {
 	jb.mu.Lock()
 	defer jb.mu.Unlock()
 
+	jb.packetsDropped += uint64(len(jb.packets))
+
 	jb.packets = make(PacketHeap, 0, jb.config.MaxSize)
 	jb.packetMap = make(map[uint16]*BufferedPacket)
 	heap.Init(&jb.packets)
-
-	jb.packetsDropped += uint64(len(jb.packets))
 
 	jitterBufferSize.WithLabelValues(jb.sessionID).Set(0)
 }

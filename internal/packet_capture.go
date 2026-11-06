@@ -3,6 +3,7 @@ package internal
 import (
 	"log"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/google/gopacket"
@@ -15,10 +16,14 @@ var (
 	pcapFile    *os.File
 	pcapWriter  *pcapgo.Writer
 	pcapEnabled bool
+	pcapMu      sync.Mutex
 )
 
 // InitPCAPCapture initializes packet capture and creates a PCAP file
 func InitPCAPCapture() {
+	pcapMu.Lock()
+	defer pcapMu.Unlock()
+
 	var err error
 
 	// Ensure logs directory exists
@@ -48,22 +53,36 @@ func InitPCAPCapture() {
 
 // IsPCAPEnabled returns whether packet capture is enabled
 func IsPCAPEnabled() bool {
+	pcapMu.Lock()
+	defer pcapMu.Unlock()
 	return pcapEnabled
 }
 
 // SetPCAPEnabled enables or disables packet capture
 func SetPCAPEnabled(enabled bool) {
-	// If turning on and not already initialized
-	if enabled && !pcapEnabled && pcapWriter == nil {
-		InitPCAPCapture()
-	} else if !enabled && pcapEnabled {
-		ClosePCAPCapture()
+	if enabled {
+		pcapMu.Lock()
+		needInit := !pcapEnabled && pcapWriter == nil
+		pcapMu.Unlock()
+		if needInit {
+			InitPCAPCapture()
+		}
+	} else {
+		pcapMu.Lock()
+		wasEnabled := pcapEnabled
 		pcapEnabled = false
+		pcapMu.Unlock()
+		if wasEnabled {
+			ClosePCAPCapture()
+		}
 	}
 }
 
 // CapturePacket writes an RTP packet to the PCAP file
 func CapturePacket(packet []byte) {
+	pcapMu.Lock()
+	defer pcapMu.Unlock()
+
 	if pcapWriter == nil {
 		return
 	}
@@ -77,8 +96,13 @@ func CapturePacket(packet []byte) {
 
 // ClosePCAPCapture properly closes the PCAP file
 func ClosePCAPCapture() {
+	pcapMu.Lock()
+	defer pcapMu.Unlock()
+
 	if pcapFile != nil {
 		pcapFile.Close()
+		pcapFile = nil
+		pcapWriter = nil
 		log.Println("PCAP capture file closed.")
 	}
 }

@@ -393,7 +393,12 @@ func (rl *RateLimiter) GetBlockedIPs() []string {
 
 // Stop stops the rate limiter
 func (rl *RateLimiter) Stop() {
-	close(rl.stopCh)
+	select {
+	case <-rl.stopCh:
+		// already closed
+	default:
+		close(rl.stopCh)
+	}
 }
 
 // Reset resets all rate limiter state
@@ -492,14 +497,12 @@ func extractIPFromRequest(r *http.Request) string {
 	// Check X-Forwarded-For header
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 		// Take the first IP in the list
-		if idx := len(xff); idx > 0 {
-			for i := 0; i < len(xff); i++ {
-				if xff[i] == ',' {
-					return xff[:i]
-				}
+		for i := 0; i < len(xff); i++ {
+			if xff[i] == ',' {
+				return xff[:i]
 			}
-			return xff
 		}
+		return xff
 	}
 
 	// Check X-Real-IP header

@@ -110,35 +110,37 @@ func (h *DeleteHandler) Handle(req *ng.NGRequest) (*ng.NGResponse, error) {
 			}
 
 			if session.CallerLeg != nil {
-				stats.PacketsSent += session.CallerLeg.PacketsSent
-				stats.PacketsRecv += session.CallerLeg.PacketsRecv
-				stats.BytesSent += session.CallerLeg.BytesSent
-				stats.BytesRecv += session.CallerLeg.BytesRecv
+				ls := session.CallerLeg.LoadStats()
+				stats.PacketsSent += ls.PacketsSent
+				stats.PacketsRecv += ls.PacketsRecv
+				stats.BytesSent += ls.BytesSent
+				stats.BytesRecv += ls.BytesRecv
 
 				stats.Legs = append(stats.Legs, ng.LegStats{
 					Tag:         session.CallerLeg.Tag,
 					SSRC:        session.CallerLeg.SSRC,
-					PacketsSent: session.CallerLeg.PacketsSent,
-					PacketsRecv: session.CallerLeg.PacketsRecv,
-					BytesSent:   session.CallerLeg.BytesSent,
-					BytesRecv:   session.CallerLeg.BytesRecv,
+					PacketsSent: ls.PacketsSent,
+					PacketsRecv: ls.PacketsRecv,
+					BytesSent:   ls.BytesSent,
+					BytesRecv:   ls.BytesRecv,
 					Jitter:      session.CallerLeg.Jitter,
 				})
 			}
 
 			if session.CalleeLeg != nil {
-				stats.PacketsSent += session.CalleeLeg.PacketsSent
-				stats.PacketsRecv += session.CalleeLeg.PacketsRecv
-				stats.BytesSent += session.CalleeLeg.BytesSent
-				stats.BytesRecv += session.CalleeLeg.BytesRecv
+				ls := session.CalleeLeg.LoadStats()
+				stats.PacketsSent += ls.PacketsSent
+				stats.PacketsRecv += ls.PacketsRecv
+				stats.BytesSent += ls.BytesSent
+				stats.BytesRecv += ls.BytesRecv
 
 				stats.Legs = append(stats.Legs, ng.LegStats{
 					Tag:         session.CalleeLeg.Tag,
 					SSRC:        session.CalleeLeg.SSRC,
-					PacketsSent: session.CalleeLeg.PacketsSent,
-					PacketsRecv: session.CalleeLeg.PacketsRecv,
-					BytesSent:   session.CalleeLeg.BytesSent,
-					BytesRecv:   session.CalleeLeg.BytesRecv,
+					PacketsSent: ls.PacketsSent,
+					PacketsRecv: ls.PacketsRecv,
+					BytesSent:   ls.BytesSent,
+					BytesRecv:   ls.BytesRecv,
 					Jitter:      session.CalleeLeg.Jitter,
 				})
 			}

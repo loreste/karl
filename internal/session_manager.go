@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -40,6 +41,7 @@ const (
 
 // CallLeg represents one side of a call (caller or callee)
 type CallLeg struct {
+	mu            sync.Mutex // protects IP, Port, LastActivity, and blocking flags
 	Tag           string
 	Label         string // rtpengine label for leg identification
 	IP            net.IP
@@ -83,6 +85,39 @@ type CallLeg struct {
 	// T.38
 	T38Enabled    bool
 	T38Gateway    bool
+}
+
+// SetRemoteAddr sets the remote IP and port (thread-safe).
+func (cl *CallLeg) SetRemoteAddr(ip net.IP, port int) {
+	cl.mu.Lock()
+	cl.IP = ip
+	cl.Port = port
+	cl.mu.Unlock()
+}
+
+// SetMediaBlocked sets the media blocked flag (thread-safe).
+func (cl *CallLeg) SetMediaBlocked(blocked bool) {
+	cl.mu.Lock()
+	cl.MediaBlocked = blocked
+	cl.mu.Unlock()
+}
+
+// CallLegStats holds a snapshot of leg counters (read via atomics).
+type CallLegStats struct {
+	PacketsSent uint64
+	PacketsRecv uint64
+	BytesSent   uint64
+	BytesRecv   uint64
+}
+
+// LoadStats returns a snapshot of the leg's counters using atomic loads.
+func (cl *CallLeg) LoadStats() CallLegStats {
+	return CallLegStats{
+		PacketsSent: atomic.LoadUint64(&cl.PacketsSent),
+		PacketsRecv: atomic.LoadUint64(&cl.PacketsRecv),
+		BytesSent:   atomic.LoadUint64(&cl.BytesSent),
+		BytesRecv:   atomic.LoadUint64(&cl.BytesRecv),
+	}
 }
 
 // ICECredentials holds ICE authentication credentials
@@ -189,6 +224,9 @@ type MediaSession struct {
 
 	// Loop protection
 	LoopProtect bool
+
+	// Media relay (per-session RTP forwarding)
+	Relay *MediaRelay
 }
 
 // SessionRecording holds recording state for a session
@@ -231,11 +269,12 @@ type SessionRegistry struct {
 	cleanupTicker *time.Ticker
 	stopCleanup   chan struct{}
 	sessionTTL    time.Duration
+	maxSessions   int
 	onSessionEnd  func(*MediaSession)
 }
 
 // NewSessionRegistry creates a new session registry
-func NewSessionRegistry(sessionTTL time.Duration) *SessionRegistry {
+func NewSessionRegistry(sessionTTL time.Duration, opts ...func(*SessionRegistry)) *SessionRegistry {
 	sr := &SessionRegistry{
 		sessions:     make(map[string]*MediaSession),
 		callIDIndex:  make(map[string][]*MediaSession),
@@ -245,11 +284,20 @@ func NewSessionRegistry(sessionTTL time.Duration) *SessionRegistry {
 		stopCleanup:  make(chan struct{}),
 	}
 
+	for _, opt := range opts {
+		opt(sr)
+	}
+
 	// Start cleanup goroutine
 	sr.cleanupTicker = time.NewTicker(30 * time.Second)
 	go sr.cleanupLoop()
 
 	return sr
+}
+
+// WithMaxSessions sets the maximum number of concurrent sessions.
+func WithMaxSessions(max int) func(*SessionRegistry) {
+	return func(sr *SessionRegistry) { sr.maxSessions = max }
 }
 
 // SetOnSessionEnd sets the callback for session termination
@@ -290,10 +338,14 @@ func (sr *SessionRegistry) cleanupStaleSessions() {
 	}
 }
 
-// CreateSession creates a new media session
+// CreateSession creates a new media session. Returns nil if max sessions reached.
 func (sr *SessionRegistry) CreateSession(callID, fromTag string) *MediaSession {
 	sr.mu.Lock()
 	defer sr.mu.Unlock()
+
+	if sr.maxSessions > 0 && len(sr.sessions) >= sr.maxSessions {
+		return nil
+	}
 
 	session := &MediaSession{
 		ID:           uuid.New().String(),
@@ -507,8 +559,17 @@ func (sr *SessionRegistry) removeSessionLocked(sessionID string) error {
 		return fmt.Errorf("session not found: %s", sessionID)
 	}
 
+	// Stop media relay BEFORE acquiring session lock to avoid deadlock:
+	// Relay.Stop() calls wg.Wait(), and relay goroutines acquire session.mu.RLock()
+	// in the timeout loop. If we hold session.mu.Lock here, that deadlocks.
+	if session.Relay != nil {
+		session.Relay.Stop()
+	}
+
 	session.mu.Lock()
 	defer session.mu.Unlock()
+
+	session.Relay = nil
 
 	// Remove from callID index
 	sessions := sr.callIDIndex[session.CallID]

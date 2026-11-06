@@ -31,8 +31,10 @@ func StartRTPUDPListener(address string) {
 			continue
 		}
 
-		// Handle incoming RTP packet
-		go handleRTPPacket(buf[:n], addr)
+		// Copy packet before passing to goroutine to avoid data race on shared buf
+		pkt := make([]byte, n)
+		copy(pkt, buf[:n])
+		go handleRTPPacket(pkt, addr)
 	}
 }
 

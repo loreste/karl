@@ -11,6 +11,9 @@ spec:
   selector:
     matchLabels:
       app: karl
+  # RTP media servers should not do rolling updates — drain first
+  strategy:
+    type: Recreate
   template:
     metadata:
       labels:
@@ -20,9 +23,12 @@ spec:
         prometheus.io/port: "9091"
         prometheus.io/path: "/metrics"
     spec:
-      # Use host network for RTP media - simplest approach for media servers
+      # hostNetwork required for RTP — media endpoints must be reachable
+      # directly on the node IP with the allocated port range.
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
+      # Allow time for active calls to drain before SIGKILL
+      terminationGracePeriodSeconds: 60
 
       containers:
       - name: karl
@@ -44,19 +50,27 @@ spec:
           protocol: TCP
 
         env:
-        - name: KARL_LOG_LEVEL
-          value: "info"
         - name: KARL_CONFIG_PATH
           value: "/etc/karl/config.json"
         - name: KARL_RUN_DIR
           value: "/var/run/karl"
+        - name: KARL_LOG_LEVEL
+          value: "info"
         - name: KARL_HEALTH_PORT
           value: ":8086"
         - name: KARL_METRICS_PORT
           value: ":9091"
         - name: KARL_API_PORT
           value: ":8080"
-        # Optional: Override config values via environment
+        # Version injected at build/deploy time
+        - name: KARL_VERSION
+          value: "0.1.0"
+        # Pod IP for media_ip — uses downward API so karl advertises the correct IP in SDP
+        - name: KARL_MEDIA_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
+        # Optional: secrets for database backends
         # - name: KARL_MYSQL_DSN
         #   valueFrom:
         #     secretKeyRef:
@@ -64,6 +78,8 @@ spec:
         #       key: mysql-dsn
         # - name: KARL_REDIS_ADDR
         #   value: "redis:6379"
+        # - name: KARL_REDIS_ENABLED
+        #   value: "true"
 
         volumeMounts:
         - name: config
@@ -74,7 +90,6 @@ spec:
         - name: run
           mountPath: /var/run/karl
 
-        # Startup probe - allows slow startup before liveness kicks in
         startupProbe:
           httpGet:
             path: /startup
@@ -82,9 +97,8 @@ spec:
           initialDelaySeconds: 5
           periodSeconds: 5
           timeoutSeconds: 3
-          failureThreshold: 30  # 5s * 30 = 150s max startup time
+          failureThreshold: 30
 
-        # Liveness probe - restart if process is deadlocked
         livenessProbe:
           httpGet:
             path: /live
@@ -93,7 +107,6 @@ spec:
           timeoutSeconds: 5
           failureThreshold: 3
 
-        # Readiness probe - remove from service if not ready to accept traffic
         readinessProbe:
           httpGet:
             path: /ready
@@ -130,7 +143,6 @@ spec:
       - name: run
         emptyDir: {}
 
-      # Prefer scheduling on nodes with low latency
       affinity:
         nodeAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:

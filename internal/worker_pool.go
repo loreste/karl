@@ -249,7 +249,7 @@ func ParseRTPPacket(data []byte) (*RTPPacket, error) {
 	payloadEnd := len(data)
 	if hasPadding && len(data) > 0 {
 		paddingSize := int(data[len(data)-1])
-		if paddingSize > 0 && len(data) >= paddingSize {
+		if paddingSize > 0 && payloadEnd-paddingSize >= headerSize {
 			payloadEnd -= paddingSize
 		}
 	}

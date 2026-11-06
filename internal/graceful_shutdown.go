@@ -62,6 +62,7 @@ type GracefulShutdownManager struct {
 	drainCh       chan struct{}
 	shutdownCh    chan struct{}
 	doneCh        chan struct{}
+	doneOnce      sync.Once
 }
 
 // ShutdownCallback is called during shutdown
@@ -258,7 +259,7 @@ func (m *GracefulShutdownManager) Shutdown(ctx context.Context) error {
 		cancel()
 	}
 
-	close(m.doneCh)
+	m.doneOnce.Do(func() { close(m.doneCh) })
 	log.Println("Graceful shutdown completed")
 	return lastErr
 }

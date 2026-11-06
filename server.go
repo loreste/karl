@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"karl/internal"
+	"karl/internal/recording"
 
 	"github.com/pion/webrtc/v3"
 )
@@ -37,10 +38,11 @@ type KarlServer struct {
 	healthServer   *http.Server            // Health check server
 
 	// New components
-	sessionRegistry *internal.SessionRegistry
-	ngListener      *internal.NGSocketListener
-	rtcpHandler     *internal.RTCPHandler
-	fecHandler      *internal.FECHandler
+	sessionRegistry  *internal.SessionRegistry
+	ngListener       *internal.NGSocketListener
+	rtcpHandler      *internal.RTCPHandler
+	fecHandler       *internal.FECHandler
+	recordingManager *recording.Manager
 }
 
 // NewKarlServer creates and initializes a new KarlServer instance

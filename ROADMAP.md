@@ -4,15 +4,15 @@ This document outlines the implementation plan to make Karl a complete, producti
 
 ## Current State
 
-Karl already provides:
-- NG protocol support (ping, offer, answer, delete, query, list, recording, block media, DTMF)
-- WebRTC bridging with ICE/DTLS-SRTP
-- Prometheus metrics and health probes
-- REST API for management
-- Call recording (mixed, stereo, separate modes)
-- SRTP/DTLS-SRTP encryption
-- G.711 and Opus codec support
-- Adaptive jitter buffer and FEC
+Karl provides a working media relay with NG protocol compatibility:
+- **NG protocol**: Full bencode parsing, all major commands (ping, offer, answer, delete, query, list, recording, block media, DTMF)
+- **Media relay**: Per-session RTP forwarding with per-leg UDP sockets, NAT traversal (symmetric RTP, port latching, media handover, strict-source validation)
+- **SDP handling**: Full SDP parsing and rewriting with ICE, DTLS, SDES, codec filtering, direction control
+- **Call recording**: WAV output (mixed/stereo/separate), wired into media relay path
+- **Security**: Real DTLS fingerprints (self-signed ECDSA), random ICE credentials, real SDES crypto keys, rate limiting, API auth
+- **Observability**: 50+ Prometheus metrics, Kubernetes health probes, structured logging
+- **Codec transcoding**: G.711 PCMU↔PCMA (working); Opus, G.729, AMR, iLBC (stubs — need native codec bindings)
+- **Production hardening**: Panic recovery, resource leak protection, MaxSessions enforcement, race-free (verified with `-race`)
 - Kubernetes-native deployment
 
 ## Gaps to Full Replacement
@@ -275,21 +275,21 @@ Ensure responses match rtpengine format exactly:
 - [x] **ROC handling** - Roll-over counter (pion/srtp)
 - [x] **MKI support** - Master Key Identifier (pion/srtp)
 - [x] **Crypto suite negotiation** - All standard suites (pion/srtp)
-- [x] **SRTP↔RTP gateway** - Clean transcryption (rtp_forwarding.go)
+- [ ] **SRTP↔RTP gateway** - DTLS handshake + key extraction not yet wired into per-session media relay
 
 ### 2.3 NAT/Interface Logic
 
 Implement rtpengine-compatible interface handling:
 
 - [x] **Named interfaces** - Define interfaces in config (interface_selector.go)
-- [x] **Interface selection** - Per-call interface choice (interface_selector.go)
-- [x] **Peer-based routing** - Select interface by peer (interface_selector.go)
+- [x] **Interface selection** - Per-call interface choice (offer.go selectMediaIP)
 - [x] **Direction hints** - internal/external awareness (interface_selector.go)
-- [x] **NAT detection** - Automatic NAT detection (interface_selector.go)
-- [x] **Symmetric NAT** - Handle symmetric NAT (loop_protection.go)
-- [x] **Address learning** - Learn addresses from packets (loop_protection.go)
-- [x] **Port latching** - First-packet port latching (loop_protection.go)
-- [x] **Multiple NICs** - Support multiple interfaces (interface_selector.go)
+- [x] **Symmetric NAT** - Port latching from first packet (media_relay.go readLoop)
+- [x] **Address learning** - Learn addresses from incoming packets (media_relay.go)
+- [x] **Port latching** - First-packet port latching with re-latch on media-handover (media_relay.go)
+- [x] **Strict source** - Reject packets from non-SDP addresses (media_relay.go)
+- [x] **Media handover** - Allow source change mid-call for roaming (media_relay.go)
+- [ ] **Topology hiding** - Different interfaces per leg (both legs currently use same IP pool)
 
 ### 2.4 IPv4↔IPv6 Bridging
 
@@ -360,16 +360,16 @@ Implement RFC 7865/7866 SIPREC:
 
 ### 3.3 Advanced Transcoding
 
-- [x] **G.722** - Wideband codec (codec_converter.go)
-- [x] **G.729** - Low bitrate codec (g729_codec.go, using bcg729-compatible API)
-- [x] **AMR** - Mobile codec (amr_codec.go)
-- [x] **AMR-WB** - Wideband AMR (amr_codec.go)
-- [x] **iLBC** - Internet low bitrate (ilbc_codec.go)
-- [x] **Speex** - Legacy codec (speex_codec.go)
+- [x] **G.711 PCMU↔PCMA** - Lookup table transcoding (codec_converter.go, codec_table.go)
+- [x] **G.711↔PCM** - Linear PCM encode/decode (codec_converter.go)
+- [ ] **Opus** - Stub encoder/decoder present, not real compression (needs libopus or CGO)
+- [ ] **G.722** - Stub (codec_converter.go)
+- [ ] **G.729** - Stub API (g729_codec.go, needs bcg729 native library)
+- [ ] **AMR/AMR-WB** - Stub (amr_codec.go, needs native library)
+- [ ] **iLBC** - Stub (ilbc_codec.go, needs native library)
 - [ ] **VP8/VP9** - Video codecs (future)
 - [ ] **H.264** - Video codec (future)
-- [x] **Transcode chaining** - Multiple transcodes (codec_converter.go)
-- [x] **Bitrate adaptation** - Dynamic bitrate (codec_converter.go)
+- [x] **Transcode routing** - TranscodeAudio dispatcher for codec pairs (codec_converter.go)
 
 ### 3.4 Multi-Node Clustering
 

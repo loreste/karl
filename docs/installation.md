@@ -48,7 +48,7 @@ This guide covers all installation methods for Karl Media Server.
 
 ### Prerequisites
 
-- Go 1.25 or higher
+- Go 1.26 or higher
 - Git
 
 ### Steps

@@ -144,9 +144,9 @@ Full compatibility with rtpengine NG protocol:
 - **Forward Error Correction**: XOR-based FEC with adaptive redundancy (10-50%) based on real-time packet loss
 - **RTCP Processing**: Full RFC 3550 implementation with SR/RR reports, RTT calculation, and quality metrics
 - **SRTP/DTLS-SRTP**: Complete encryption support for secure media transport
-- **Codec Support**: G.711 (PCMU/PCMA), G.722, G.729, Opus, AMR/AMR-WB, iLBC, Speex with transparent transcoding (pure Go implementation, no CGO required)
-- **T.38 Fax**: Full T.38 fax passthrough and gateway mode with V.21 tone detection
-- **SIPREC**: RFC 7865/7866 compliant session recording
+- **Codec Support**: G.711 (PCMU/PCMA) transcoding with lookup tables; Opus, G.722, G.729, AMR, iLBC codec stubs present (pure Go, no CGO) — real compression requires linking native libraries
+- **T.38 Fax**: T.38 detection and passthrough mode (gateway mode is structural, not fully wired)
+- **SIPREC**: RFC 7865/7866 metadata parsing and session structures (recording output wired via media relay)
 
 ### Call Recording
 
@@ -214,7 +214,7 @@ curl -X POST http://localhost:8080/api/v1/recording/stop \
 
 ### Prerequisites
 
-- Go 1.25 or higher
+- Go 1.26 or higher
 - MySQL/MariaDB (optional, for CDR storage)
 - Redis (optional, for distributed session caching)
 
@@ -710,14 +710,14 @@ Karl is optimized for high-throughput media processing:
 
 ### Component Overview
 
-- **NG Protocol Handler**: Processes commands from SIP proxies
-- **Session Manager**: Tracks call state and media allocations
-- **RTP Forwarder**: High-performance packet routing with worker pools
-- **Jitter Buffer**: Adaptive buffering for smooth playback
-- **FEC Handler**: Forward error correction for lossy networks
-- **RTCP Handler**: Quality monitoring and statistics
-- **Recording Manager**: Call recording with multiple output modes
-- **WebRTC Bridge**: ICE/DTLS/SRTP for browser integration
+- **NG Protocol Handler** (`ng_socket_listener.go`): Processes bencode commands from SIP proxies over UDP/Unix socket
+- **Command Handlers** (`ng_protocol/commands/`): Offer, Answer, Delete, Query — create sessions, allocate ports, build SDP
+- **Session Manager** (`session_manager.go`): Tracks call state, legs, SSRC indexes, TTL cleanup
+- **Media Relay** (`media_relay.go`): Per-session RTP forwarding between call legs with NAT handling (symmetric RTP, port latching, media handover, strict-source), media blocking/silencing, recording hooks, and media timeout detection
+- **Recording Manager** (`recording/`): WAV file writing with mixed/stereo/separate modes, wired to relay via OnPacket hook
+- **RTCP Handler** (`rtcp_handler.go`): Quality monitoring with jitter, loss, RTT calculation
+- **FEC Handler** (`fec_handler.go`): XOR-based forward error correction
+- **Jitter Buffer** (`jitter_buffer.go`): Adaptive buffering (20-200ms) with sequence reordering
 
 ---
 
@@ -727,32 +727,37 @@ Karl is a full-featured rtpengine replacement. See the detailed [ROADMAP.md](./R
 
 ### Phase 1: Control-Plane Parity ✅ Complete
 - [x] Complete NG protocol flag support (100+ flags)
-- [x] Behavioral semantics parity
+- [x] Bencode parsing, cookie correlation, UDP/Unix socket listener
 - [x] Response format compatibility
 
 ### Phase 2: Relay-Grade Media ✅ Complete
-- [x] NAT/interface logic parity
-- [x] IPv4↔IPv6 bridging
-- [x] ICE-full and ICE-lite modes
-- [x] Media fast path with zero-copy forwarding
+- [x] Per-session media relay with per-leg UDP sockets
+- [x] NAT traversal: symmetric RTP, port latching, media handover, strict-source
+- [x] Real DTLS fingerprint (self-signed ECDSA cert) and random ICE credentials
+- [x] Real SDES crypto keys (RFC 4568 compliant)
+- [x] Media blocking, silencing, media timeout auto-delete
+- [x] Recording hook wired into media relay path
 
-### Phase 3: Enterprise Features ✅ Complete
-- [x] SIPREC recording integration (RFC 7865/7866)
-- [x] T.38 fax passthrough with V.21 detection
-- [x] SRTP↔RTP gateway mode
-- [x] Multi-node clustering with Redis backend
-- [x] Split-brain detection and failover
+### Phase 3: Enterprise Features (Partial)
+- [x] Call recording: WAV output, mixed/stereo/separate modes, wired to media path
+- [x] G.711 PCMU↔PCMA transcoding (lookup table)
+- [x] Redis session caching structures
+- [ ] Opus/G.729/AMR transcoding (stubs present, need native codec libraries)
+- [ ] SRTP↔RTP gateway (DTLS handshake + key derivation not yet wired to relay)
+- [ ] T.38 fax gateway (detection present, gateway not wired)
+- [ ] Multi-node failover (structures present, not production tested)
 
 ### Phase 4: Operational Maturity ✅ Complete
-- [x] Performance engineering (buffer pools, socket sharding)
-- [x] Comprehensive test suite with race detection
-- [x] Security hardening (TLS, authentication, rate limiting)
-- [x] Memory leak and GC leak testing
+- [x] 926+ tests with race detection, zero failures
+- [x] Panic recovery in relay goroutines
+- [x] Resource leak protection (port cleanup on error, MaxSessions enforcement)
+- [x] Security: rate limiting, API auth, DoS protection, circuit breakers
+- [x] Prometheus metrics (50+), health probes, structured logging
 
 ### Phase 5: Testing & Validation (Ongoing)
-- [x] Unit tests for core components
-- [ ] Integration tests with SIP proxies
-- [ ] Chaos testing infrastructure
+- [x] Unit tests and integration tests for media relay (offer→answer→RTP flow→delete)
+- [ ] Integration tests with live SIP proxies (OpenSIPS, Kamailio)
+- [ ] Chaos testing, sustained load testing
 
 ---
 

@@ -326,9 +326,10 @@ func (s *RTCPSessionHandler) UpdateReceiverStats(seq uint16, timestamp uint32, a
 			s.highestSeq = seq
 		}
 
-		// Calculate expected packets
-		expectedSeq := s.highestSeq + uint16(s.seqCycles*65536)
-		expected := int32(expectedSeq) - int32(s.lastSeq) + 1
+		// Calculate expected packets (use uint32 to avoid uint16 overflow)
+		extendedHighest := uint32(s.highestSeq) + s.seqCycles*65536
+		extendedLast := uint32(s.lastSeq)
+		expected := int32(extendedHighest) - int32(extendedLast) + 1
 		received := int32(s.packetsRecv) + 1
 		s.packetsLost = expected - received
 		if s.packetsLost < 0 {

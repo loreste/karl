@@ -4,7 +4,7 @@ This guide will help you get Karl running in under 5 minutes.
 
 ## Prerequisites
 
-- Go 1.25 or higher (for building from source)
+- Go 1.26 or higher (for building from source)
 - Docker (optional, for container deployment)
 - A SIP proxy (OpenSIPS or Kamailio) for production use
 

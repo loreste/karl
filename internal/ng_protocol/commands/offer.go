@@ -1,6 +1,9 @@
 package commands
 
 import (
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"net"
@@ -9,6 +12,13 @@ import (
 	"karl/internal"
 	ng "karl/internal/ng_protocol"
 )
+
+// generateSDESKey produces a random 30-byte master key + 14-byte salt, base64-encoded (RFC 4568).
+func generateSDESKey() string {
+	keySalt := make([]byte, 30+14) // 30-byte key + 14-byte salt
+	rand.Read(keySalt)
+	return base64.StdEncoding.EncodeToString(keySalt)
+}
 
 // OfferHandler handles the offer command
 type OfferHandler struct {
@@ -55,8 +65,13 @@ func (h *OfferHandler) Handle(req *ng.NGRequest) (*ng.NGResponse, error) {
 	session := h.sessionRegistry.GetSessionByTags(req.CallID, req.FromTag, req.ToTag)
 	isNewSession := session == nil
 	if isNewSession {
-		// Create new session
 		session = h.sessionRegistry.CreateSession(req.CallID, req.FromTag)
+		if session == nil {
+			return &ng.NGResponse{
+				Result:      ng.ResultError,
+				ErrorReason: "max sessions reached",
+			}, nil
+		}
 		log.Printf("Created new session %s for call-id %s", session.ID, req.CallID)
 	}
 
@@ -175,6 +190,14 @@ func (h *OfferHandler) processOfferSDP(session *internal.MediaSession, sdp strin
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to allocate media ports: %w", err)
 	}
+	// Ensure sockets are closed if anything below fails
+	portsCleanedUp := false
+	defer func() {
+		if !portsCleanedUp {
+			rtpConn.Close()
+			rtcpConn.Close()
+		}
+	}()
 
 	// Determine label for this leg
 	legLabel := flags.Label
@@ -234,6 +257,7 @@ func (h *OfferHandler) processOfferSDP(session *internal.MediaSession, sdp strin
 	if err := h.sessionRegistry.SetCallerLeg(session.ID, callerLeg); err != nil {
 		return "", nil, fmt.Errorf("failed to set caller leg: %w", err)
 	}
+	portsCleanedUp = true // sockets now owned by the session
 
 	// Also store by label if set
 	if legLabel != "" {
@@ -469,7 +493,7 @@ func (h *OfferHandler) buildStreamInfo(leg *internal.CallLeg, localIP string, rt
 	// Add DTLS info if applicable
 	if leg.SRTPParams != nil && leg.SRTPParams.DTLS {
 		streams[0].Setup = "actpass"
-		streams[0].Fingerprint = "sha-256 XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX"
+		streams[0].Fingerprint = internal.GetDTLSFingerprint()
 		streams[0].FingerprintHash = "sha-256"
 	}
 
@@ -695,7 +719,7 @@ func (h *OfferHandler) writeICEAttributes(sb *strings.Builder, localIP string, l
 func (h *OfferHandler) writeSecurityAttributes(sb *strings.Builder, parsed *ParsedSDP, flags *ng.ParsedFlags) {
 	// DTLS
 	if !flags.DTLSOff && parsed.HasDTLS {
-		sb.WriteString("a=fingerprint:sha-256 XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX\r\n")
+		sb.WriteString(fmt.Sprintf("a=fingerprint:%s\r\n", internal.GetDTLSFingerprint()))
 
 		setup := "actpass"
 		if flags.DTLSPassive {
@@ -713,15 +737,18 @@ func (h *OfferHandler) writeSecurityAttributes(sb *strings.Builder, parsed *Pars
 		if cryptoSuite == "" {
 			cryptoSuite = "AES_CM_128_HMAC_SHA1_80"
 		}
-		sb.WriteString(fmt.Sprintf("a=crypto:1 %s inline:XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\r\n",
-			cryptoSuite))
+		sb.WriteString(fmt.Sprintf("a=crypto:1 %s inline:%s\r\n",
+			cryptoSuite, generateSDESKey()))
 	}
 }
 
-// generateICECredentials generates ICE credentials
+// generateICECredentials generates random ICE credentials per RFC 5245.
 func generateICECredentials() (ufrag, pwd string) {
-	// In production, use crypto/rand
-	ufrag = "karl" + fmt.Sprintf("%08x", uint32(1234567890))
-	pwd = "karlpass" + fmt.Sprintf("%016x", uint64(9876543210123456789))
+	u := make([]byte, 4)
+	p := make([]byte, 16)
+	rand.Read(u)
+	rand.Read(p)
+	ufrag = hex.EncodeToString(u)
+	pwd = hex.EncodeToString(p)
 	return
 }

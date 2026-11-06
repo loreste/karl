@@ -210,7 +210,7 @@ func (e *pureGoOpusEncoder) Encode(pcm []int16, frameSize int) ([]byte, error) {
 		}
 	}
 
-	if expectedSize > 5 {
+	if expectedSize > 5 && highEnergy > 0 {
 		output[5] = byte((lowEnergy / highEnergy) * 128)
 	}
 

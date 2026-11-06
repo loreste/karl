@@ -1,8 +1,16 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"os"
+)
+
+// Set at build time via: go build -ldflags "-X main.version=1.0.0 -X main.commit=$(git rev-parse --short HEAD) -X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+var (
+	version   = "0.1.0"
+	commit    = "dev"
+	buildDate = "unknown"
 )
 
 // getRunDir returns the run directory from environment or default
@@ -27,7 +35,21 @@ func ensureRunDir() error {
 }
 
 func main() {
-	log.Println("Starting Karl RTP Engine...")
+	// Allow overriding version info via environment (for containers/CI)
+	if v := os.Getenv("KARL_VERSION"); v != "" {
+		version = v
+	}
+	if c := os.Getenv("KARL_COMMIT"); c != "" {
+		commit = c
+	}
+
+	// Handle --version / -v flag
+	if len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "-v") {
+		fmt.Printf("karl %s (commit: %s, built: %s)\n", version, commit, buildDate)
+		return
+	}
+
+	log.Printf("Starting Karl Media Server %s (commit: %s)", version, commit)
 
 	// Ensure run directory exists before starting
 	if err := ensureRunDir(); err != nil {

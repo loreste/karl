@@ -10,11 +10,23 @@ import (
 	ng "karl/internal/ng_protocol"
 )
 
+// RecordingWriter is an interface for writing RTP packets to a recording.
+// Avoids importing recording package directly (cycle prevention).
+type RecordingWriter interface {
+	WriteRTPPacket(sessionID string, payload []byte, payloadType uint8, isCaller bool) error
+}
+
 // AnswerHandler handles the answer command
 type AnswerHandler struct {
-	sessionRegistry *internal.SessionRegistry
-	sdpProcessor    *SDPProcessorImpl
-	config          *internal.Config
+	sessionRegistry  *internal.SessionRegistry
+	sdpProcessor     *SDPProcessorImpl
+	config           *internal.Config
+	recordingManager RecordingWriter
+}
+
+// SetRecordingManager sets the recording manager for media capture.
+func (h *AnswerHandler) SetRecordingManager(rm RecordingWriter) {
+	h.recordingManager = rm
 }
 
 // NewAnswerHandler creates a new answer handler
@@ -83,6 +95,9 @@ func (h *AnswerHandler) Handle(req *ng.NGRequest) (*ng.NGResponse, error) {
 		session.ToTag = req.ToTag
 		session.Unlock()
 	}
+
+	// Start media relay now that both legs exist
+	h.startMediaRelay(session, flags)
 
 	// Start recording if flagged
 	if session.GetFlag("record") || flags.RecordCall || flags.StartRecording {
@@ -182,6 +197,13 @@ func (h *AnswerHandler) processAnswerSDP(session *internal.MediaSession, sdp str
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to allocate media ports: %w", err)
 	}
+	portsCleanedUp := false
+	defer func() {
+		if !portsCleanedUp {
+			rtpConn.Close()
+			rtcpConn.Close()
+		}
+	}()
 
 	// Determine label for this leg
 	legLabel := flags.Label
@@ -244,6 +266,7 @@ func (h *AnswerHandler) processAnswerSDP(session *internal.MediaSession, sdp str
 	if err := h.sessionRegistry.SetCalleeLeg(session.ID, calleeLeg); err != nil {
 		return "", nil, fmt.Errorf("failed to set callee leg: %w", err)
 	}
+	portsCleanedUp = true // sockets now owned by the session
 
 	// Also store by label if set
 	if legLabel != "" {
@@ -447,7 +470,7 @@ func (h *AnswerHandler) buildStreamInfo(leg *internal.CallLeg, localIP string, r
 	// Add DTLS info if applicable
 	if leg.SRTPParams != nil && leg.SRTPParams.DTLS {
 		streams[0].Setup = "active"
-		streams[0].Fingerprint = "sha-256 XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX"
+		streams[0].Fingerprint = internal.GetDTLSFingerprint()
 		streams[0].FingerprintHash = "sha-256"
 	}
 
@@ -671,7 +694,7 @@ func (h *AnswerHandler) writeICEAttributes(sb *strings.Builder, localIP string, 
 func (h *AnswerHandler) writeSecurityAttributes(sb *strings.Builder, parsed *ParsedSDP, flags *ng.ParsedFlags) {
 	// DTLS
 	if !flags.DTLSOff && parsed.HasDTLS {
-		sb.WriteString("a=fingerprint:sha-256 XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX:XX\r\n")
+		sb.WriteString(fmt.Sprintf("a=fingerprint:%s\r\n", internal.GetDTLSFingerprint()))
 
 		// For answer, determine setup based on offer
 		setup := "active"
@@ -694,7 +717,39 @@ func (h *AnswerHandler) writeSecurityAttributes(sb *strings.Builder, parsed *Par
 		if cryptoSuite == "" {
 			cryptoSuite = "AES_CM_128_HMAC_SHA1_80"
 		}
-		sb.WriteString(fmt.Sprintf("a=crypto:1 %s inline:XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\r\n",
-			cryptoSuite))
+		sb.WriteString(fmt.Sprintf("a=crypto:1 %s inline:%s\r\n",
+			cryptoSuite, generateSDESKey()))
 	}
+}
+
+// startMediaRelay creates and starts a MediaRelay for the session.
+func (h *AnswerHandler) startMediaRelay(session *internal.MediaSession, flags *ng.ParsedFlags) {
+	relay := internal.NewMediaRelay(session)
+
+	// Wire recording if enabled
+	if h.recordingManager != nil && (session.GetFlag("record") || flags.RecordCall || flags.StartRecording) {
+		rm := h.recordingManager
+		relay.OnPacket = func(s *internal.MediaSession, srcLeg *internal.CallLeg, pkt []byte) {
+			if len(pkt) < 12 {
+				return
+			}
+			isCaller := (srcLeg == s.CallerLeg)
+			pt := pkt[1] & 0x7F
+			rm.WriteRTPPacket(s.ID, pkt[12:], pt, isCaller)
+		}
+	}
+
+	// Wire media timeout to auto-delete
+	registry := h.sessionRegistry
+	relay.OnTimeout = func(s *internal.MediaSession) {
+		log.Printf("Auto-deleting session %s due to media timeout", s.ID)
+		_ = registry.UpdateSessionState(s.ID, string(internal.SessionStateTerminated))
+		_ = registry.DeleteSession(s.ID)
+	}
+
+	relay.Start()
+
+	session.Lock()
+	session.Relay = relay
+	session.Unlock()
 }

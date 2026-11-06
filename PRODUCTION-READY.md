@@ -66,7 +66,7 @@ This document outlines the changes made to make Karl Media Server production-rea
 
 ### Prerequisites
 
-- Go 1.23.2 or higher
+- Go 1.26 or higher
 - Prometheus for metrics collection
 - MySQL database for session persistence
 - Redis for caching (optional but recommended)
