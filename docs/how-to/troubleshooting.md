@@ -262,8 +262,9 @@ curl http://localhost:9091/metrics | grep packets
 
 **Common Causes**:
 1. RTP ports blocked by firewall
-2. Incorrect media_ip configuration
-3. NAT issues
+2. Incorrect `media_ip` configuration
+3. NAT issues — private IP leaking into SDP sent to external peers
+4. Missing or misconfigured `interfaces` / `direction` — if your SIP proxy sends `direction=internal direction=external` but Karl has no matching interfaces configured, it falls back to `media_ip` which may be a private address
 
 **Solutions**:
 ```bash
@@ -276,6 +277,13 @@ KARL_MEDIA_IP=192.168.1.100 ./karl
 # For NAT, set public_ip
 KARL_PUBLIC_IP=203.0.113.50 ./karl
 ```
+
+If you use separate internal/external interfaces, verify:
+1. Karl config has `interfaces` with correct `address` (bind) and `advertise_addr` (SDP) for each named interface
+2. Your SIP proxy sends the `direction` flag matching those interface names
+3. The `advertise_addr` for the external interface is the public/Elastic IP reachable by carriers
+
+See [Configuration — Named Interfaces](../configuration.md#named-interfaces) for setup details.
 
 ### One-Way Audio
 

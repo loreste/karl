@@ -184,6 +184,48 @@ request_route {
 }
 ```
 
+### Direction-Based Interface Selection (Internal vs External)
+
+When your media server has separate internal and external network interfaces (e.g., a private IP for your PBX and an Elastic IP for carriers), use the `direction` flag to tell Karl which IP to advertise in SDP for each call leg.
+
+**Karl config:**
+```json
+{
+  "integration": {
+    "media_ip": "10.0.0.5",
+    "interfaces": {
+      "internal": {
+        "address": "10.0.0.5",
+        "advertise_addr": "10.0.0.5"
+      },
+      "external": {
+        "address": "10.0.0.5",
+        "advertise_addr": "198.51.100.10"
+      }
+    }
+  }
+}
+```
+
+**Kamailio routing:**
+```kamailio
+request_route {
+    if (is_method("INVITE")) {
+        if (has_body("application/sdp")) {
+            if ($rd =~ "carrier\.example\.com") {
+                # Internal PBX → external carrier
+                rtpengine_manage("RTP/AVP replace-origin replace-session-connection direction=internal direction=external");
+            } else {
+                # Internal to internal
+                rtpengine_manage("RTP/AVP replace-origin replace-session-connection direction=internal direction=internal");
+            }
+        }
+    }
+}
+```
+
+With this setup, calls toward external carriers get `198.51.100.10` (the Elastic IP) in their SDP, while internal calls get `10.0.0.5`. Sockets always bind on `10.0.0.5`.
+
 ### SRTP Enforcement
 
 Force SRTP for all calls:
@@ -447,6 +489,7 @@ Common rtpengine_manage flags:
 | `SDES-on` | Enable SDES |
 | `record-call` | Enable call recording |
 | `media-timeout=N` | Media timeout in seconds |
+| `direction=X` | Interface hint (provide twice: from, to) for internal/external IP selection |
 
 ---
 

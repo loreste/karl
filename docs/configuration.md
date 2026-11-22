@@ -156,7 +156,19 @@ When configuration changes are detected, Karl logs the applied changes. Check th
     "kamailio_port": 0,
     "media_ip": "auto",
     "public_ip": "",
-    "keepalive_interval": 30
+    "keepalive_interval": 30,
+    "interfaces": {
+      "internal": {
+        "name": "internal",
+        "address": "10.0.0.5",
+        "advertise_addr": "10.0.0.5"
+      },
+      "external": {
+        "name": "external",
+        "address": "10.0.0.5",
+        "advertise_addr": "198.51.100.10"
+      }
+    }
   },
 
   "database": {
@@ -441,7 +453,7 @@ Controls WebRTC functionality for browser-based clients.
 
 ### Integration
 
-Controls integration with SIP proxies.
+Controls integration with SIP proxies and network interface selection.
 
 ```json
 {
@@ -450,9 +462,21 @@ Controls integration with SIP proxies.
     "opensips_port": 0,
     "kamailio_ip": "",
     "kamailio_port": 0,
-    "media_ip": "auto",
-    "public_ip": "",
-    "keepalive_interval": 30
+    "media_ip": "10.0.0.5",
+    "public_ip": "198.51.100.10",
+    "keepalive_interval": 30,
+    "interfaces": {
+      "internal": {
+        "name": "internal",
+        "address": "10.0.0.5",
+        "advertise_addr": "10.0.0.5"
+      },
+      "external": {
+        "name": "external",
+        "address": "10.0.0.5",
+        "advertise_addr": "198.51.100.10"
+      }
+    }
   }
 }
 ```
@@ -463,9 +487,61 @@ Controls integration with SIP proxies.
 | `opensips_port` | int | | OpenSIPS server port |
 | `kamailio_ip` | string | | Kamailio server IP for registration |
 | `kamailio_port` | int | | Kamailio server port |
-| `media_ip` | string | `auto` | IP address for media (SDP). Use `auto` for detection |
-| `public_ip` | string | | Public IP for NAT scenarios |
+| `media_ip` | string | `auto` | IP address for media socket binding. Use `auto` for detection |
+| `public_ip` | string | | Public IP for NAT scenarios (used in SDP when no per-interface `advertise_addr` is set) |
 | `keepalive_interval` | int | `30` | Keepalive interval to SIP proxies (seconds) |
+| `interfaces` | map | | Named network interfaces for direction-based media routing (see below) |
+
+#### Named Interfaces
+
+Named interfaces allow Karl to advertise different IPs in SDP depending on which direction a call is heading. This is essential when your media server has separate internal and external network paths (e.g., a private IP for your PBX and an Elastic IP for carriers).
+
+Each interface entry has:
+
+| Setting | Type | Description |
+|---------|------|-------------|
+| `name` | string | Interface identifier (e.g., `internal`, `external`) |
+| `address` | string | Local IP to bind sockets on |
+| `advertise_addr` | string | IP to put in SDP `c=` line and stream info. If empty, falls back to `address` |
+| `port` | int | Optional port override |
+
+**How direction selects the interface:**
+
+The SIP proxy sends a `direction` array in the NG protocol request (e.g., `["internal", "external"]`). Karl uses this to pick the correct interface:
+
+- `direction[0]` = originating side ("from")
+- `direction[1]` = terminating side ("to")
+
+For the **offer** (caller-side SDP), Karl uses `direction[0]` to select the interface. For the **answer** (callee-side SDP), Karl uses `direction[1]`. The selected interface's `advertise_addr` goes into the SDP, while `address` is used for the actual socket binding.
+
+**Example — carriers get the public IP, internal endpoints get the private IP:**
+
+```json
+{
+  "integration": {
+    "media_ip": "10.0.0.5",
+    "interfaces": {
+      "internal": {
+        "address": "10.0.0.5",
+        "advertise_addr": "10.0.0.5"
+      },
+      "external": {
+        "address": "10.0.0.5",
+        "advertise_addr": "198.51.100.10"
+      }
+    }
+  }
+}
+```
+
+Then in your SIP proxy, for calls toward an external carrier:
+```
+rtpengine_manage("... direction=internal direction=external");
+```
+
+Karl will bind the socket on `10.0.0.5` but put `198.51.100.10` in the SDP for the carrier-facing leg.
+
+If no `interfaces` are configured, Karl falls back to `media_ip` for binding and `public_ip` for SDP advertisement (or `media_ip` if `public_ip` is empty).
 
 ### Database
 

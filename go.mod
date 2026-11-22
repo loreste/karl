@@ -3,7 +3,7 @@ module karl
 go 1.26.0
 
 require (
-	github.com/go-sql-driver/mysql v1.10.1
+	github.com/go-sql-driver/mysql v1.10.2
 	github.com/google/gopacket v1.1.19
 	github.com/google/uuid v1.6.0
 	github.com/pion/dtls/v2 v2.2.12
@@ -31,18 +31,17 @@ require (
 	github.com/pion/sdp/v3 v3.0.20 // indirect
 	github.com/pion/stun v0.6.1 // indirect
 	github.com/pion/transport/v2 v2.2.10 // indirect
-	github.com/pion/transport/v5 v5.1.4 // indirect
+	github.com/pion/transport/v5 v5.1.5 // indirect
 	github.com/pion/turn/v2 v2.1.6 // indirect
 	github.com/prometheus/client_model v0.6.3 // indirect
-	github.com/prometheus/common v0.73.1 // indirect
+	github.com/prometheus/common v0.74.0 // indirect
 	github.com/prometheus/procfs v0.23.0 // indirect
 	github.com/stretchr/testify v1.12.1 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
 	go.uber.org/atomic v1.12.0 // indirect
-	go.yaml.in/yaml/v2 v2.4.5 // indirect
 	go.yaml.in/yaml/v3 v3.0.6 // indirect
-	golang.org/x/crypto v0.58.0 // indirect
-	golang.org/x/net v0.62.0 // indirect
-	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/crypto v0.59.0 // indirect
+	golang.org/x/net v0.63.0 // indirect
+	golang.org/x/sys v0.50.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 )

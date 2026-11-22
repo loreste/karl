@@ -21,6 +21,7 @@ type AnswerHandler struct {
 	sessionRegistry  *internal.SessionRegistry
 	sdpProcessor     *SDPProcessorImpl
 	config           *internal.Config
+	ifaceSelector    *internal.InterfaceSelector
 	recordingManager RecordingWriter
 }
 
@@ -35,6 +36,7 @@ func NewAnswerHandler(registry *internal.SessionRegistry, config *internal.Confi
 		sessionRegistry: registry,
 		sdpProcessor:    NewSDPProcessor(config),
 		config:          config,
+		ifaceSelector:   internal.NewInterfaceSelector(config),
 	}
 }
 
@@ -179,8 +181,8 @@ func (h *AnswerHandler) processAnswerSDP(session *internal.MediaSession, sdp str
 		return "", nil, fmt.Errorf("failed to parse SDP: %w", err)
 	}
 
-	// Determine local media IP based on interface selection
-	localIP := h.selectMediaIP(flags, req)
+	// Determine local media IPs based on interface/direction selection
+	bindIP, advertiseIP := selectMediaIPs(h.ifaceSelector, h.config, flags, req, false)
 
 	// Determine port range from config
 	minPort := 30000
@@ -192,8 +194,8 @@ func (h *AnswerHandler) processAnswerSDP(session *internal.MediaSession, sdp str
 		maxPort = h.config.Sessions.MaxPort
 	}
 
-	// Allocate media ports for callee
-	rtpPort, rtcpPort, rtpConn, rtcpConn, err := h.sessionRegistry.AllocateMediaPorts(localIP, minPort, maxPort)
+	// Allocate media ports on the bind address
+	rtpPort, rtcpPort, rtpConn, rtcpConn, err := h.sessionRegistry.AllocateMediaPorts(bindIP, minPort, maxPort)
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to allocate media ports: %w", err)
 	}
@@ -218,7 +220,7 @@ func (h *AnswerHandler) processAnswerSDP(session *internal.MediaSession, sdp str
 	calleeLeg := &internal.CallLeg{
 		Tag:           req.ToTag,
 		Label:         legLabel,
-		LocalIP:       net.ParseIP(localIP),
+		LocalIP:       net.ParseIP(bindIP),
 		LocalPort:     rtpPort,
 		LocalRTCPPort: rtcpPort,
 		Conn:          rtpConn,
@@ -273,51 +275,15 @@ func (h *AnswerHandler) processAnswerSDP(session *internal.MediaSession, sdp str
 		session.SetLegByLabel(legLabel, calleeLeg)
 	}
 
-	// Build modified SDP
-	modifiedSDP := h.buildModifiedSDP(parsedSDP, localIP, rtpPort, flags, session)
+	// Build modified SDP with advertise IP (what peers see)
+	modifiedSDP := h.buildModifiedSDP(parsedSDP, advertiseIP, rtpPort, flags, session)
 
-	// Build stream info for response
-	streams := h.buildStreamInfo(calleeLeg, localIP, rtpPort, rtcpPort, flags, parsedSDP)
+	// Build stream info for response with advertise IP
+	streams := h.buildStreamInfo(calleeLeg, advertiseIP, rtpPort, rtcpPort, flags, parsedSDP)
 
 	return modifiedSDP, streams, nil
 }
 
-// selectMediaIP selects the media IP based on flags and interface configuration
-func (h *AnswerHandler) selectMediaIP(flags *ng.ParsedFlags, req *ng.NGRequest) string {
-	// First check for explicit media-address flag
-	if flags.MediaAddress != "" {
-		return flags.MediaAddress
-	}
-
-	// Check interface-based selection
-	if flags.Interface != "" || flags.ToInterface != "" {
-		iface := flags.Interface
-		if flags.ToInterface != "" {
-			iface = flags.ToInterface
-		}
-
-		// Try to match interface from config
-		if h.config.Integration.Interfaces != nil {
-			if ifaceConfig, ok := h.config.Integration.Interfaces[iface]; ok {
-				if ifaceConfig.Address != "" {
-					return ifaceConfig.Address
-				}
-			}
-		}
-	}
-
-	// Use received-from if trust-address is set and SIP-source-address flag
-	if flags.TrustAddress && flags.SIPSourceAddress && req.ReceivedFrom != nil {
-		return req.ReceivedFrom.IP.String()
-	}
-
-	// Fall back to config
-	if h.config.Integration.MediaIP != "" {
-		return h.config.Integration.MediaIP
-	}
-
-	return "127.0.0.1"
-}
 
 // determineDirection determines the media direction based on flags and SDP
 func (h *AnswerHandler) determineDirection(flags *ng.ParsedFlags, parsedSDP *ParsedSDP) string {

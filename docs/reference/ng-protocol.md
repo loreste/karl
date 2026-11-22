@@ -106,7 +106,7 @@ Process SDP offer for new or existing call.
 | `to-tag` | string | SIP To-tag (for re-INVITE) |
 | `flags` | list | Processing flags |
 | `replace` | list | SDP elements to replace |
-| `direction` | list | Media direction hints |
+| `direction` | list | Interface selection hints (see [Direction-Based Interface Selection](#direction-based-interface-selection)) |
 | `ICE` | string | ICE handling mode |
 | `DTLS` | string | DTLS handling mode |
 | `SDES` | string | SDES handling mode |
@@ -346,6 +346,57 @@ Get server-wide statistics.
 
 ---
 
+## Direction-Based Interface Selection
+
+The `direction` parameter is a list of two strings that tells Karl which named network interface to use for each call leg. This is how SIP proxies like OpenSIPS and Kamailio select between internal and external media addresses.
+
+### Format
+
+```
+"direction": ["<from-interface>", "<to-interface>"]
+```
+
+- `direction[0]` — the interface name for the originating side (used during `offer`)
+- `direction[1]` — the interface name for the terminating side (used during `answer`)
+
+### Example
+
+```
+d7:command5:offer ... 9:directionl8:internal8:externale ... e
+```
+
+This tells Karl: "the caller is on the `internal` network, the callee is on the `external` network." Karl will:
+
+1. Bind media sockets on the interface's `address` (the local/private IP)
+2. Advertise the interface's `advertise_addr` in the SDP `c=` line (e.g., the public Elastic IP for `external`)
+
+### Interface Resolution Order
+
+When selecting an interface, Karl checks in this order:
+
+1. Explicit `interface` or `from-interface`/`to-interface` flag
+2. `direction` array (as described above)
+3. Peer address auto-detection (private → `internal`, public → `external`)
+4. Default interface from config (`media_ip` / `public_ip`)
+
+### OpenSIPS Example
+
+```opensips
+# Internal PBX calling an external carrier
+rtpengine_manage("RTP/AVP replace-origin replace-session-connection direction=internal direction=external");
+```
+
+### Kamailio Example
+
+```kamailio
+# Internal PBX calling an external carrier
+rtpengine_manage("RTP/AVP replace-origin replace-session-connection direction=internal direction=external");
+```
+
+See [Configuration Reference — Named Interfaces](../configuration.md#named-interfaces) for how to define interfaces.
+
+---
+
 ## Flags Reference
 
 ### Transport Protocol Flags
@@ -409,6 +460,16 @@ Get server-wide statistics.
 | Flag | Description |
 |------|-------------|
 | `record-call` | Enable call recording |
+
+### Interface / Direction Flags
+
+| Flag | Description |
+|------|-------------|
+| `direction=X` | Interface selection hint (provide twice: from, to). See [Direction-Based Interface Selection](#direction-based-interface-selection) |
+| `interface=X` | Explicit interface name for this leg |
+| `in-iface=X` / `from-interface=X` | Interface for the originating (offer) side |
+| `out-iface=X` / `to-interface=X` | Interface for the terminating (answer) side |
+| `media-address=X` | Override the media IP entirely (bypasses interface selection) |
 
 ### Media Control Flags
 
