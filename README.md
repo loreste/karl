@@ -142,11 +142,16 @@ Full compatibility with rtpengine NG protocol:
 
 - **Adaptive Jitter Buffer**: Dynamic buffering (20-200ms) with automatic adjustment based on network conditions
 - **Forward Error Correction**: XOR-based FEC with adaptive redundancy (10-50%) based on real-time packet loss
-- **RTCP Processing**: Full RFC 3550 implementation with SR/RR reports, RTT calculation, and quality metrics
-- **SRTP/DTLS-SRTP**: Complete encryption support for secure media transport
-- **Codec Support**: G.711 (PCMU/PCMA) transcoding with lookup tables; Opus, G.722, G.729, AMR, iLBC codec stubs present (pure Go, no CGO) — real compression requires linking native libraries
-- **T.38 Fax**: T.38 detection and passthrough mode (gateway mode is structural, not fully wired)
+- **RTCP Processing**: Full RFC 3550 with SR/RR reports, RTT, jitter, MOS calculation (ITU-T G.107 E-model)
+- **RTCP Forwarding**: RTCP reports relayed between legs with optional SRTCP encryption
+- **SRTP/SRTCP**: Per-leg encrypt/decrypt wired into the media relay — SDES keys from SDP create crypto contexts, DTLS keys via `SetDTLSKeys()`. Full SRTCP support for encrypted RTCP.
+- **ICE Agent**: Per-session ICE with STUN server-reflexive and TURN relay candidate gathering, connectivity checks, candidate pair selection, and consent freshness via pion/ice
+- **Codec Negotiation**: RFC 3264 intersection — answer codecs intersected with offerer's set, ordered by offerer preference
+- **Codec Support**: G.711 (PCMU/PCMA) transcoding built-in; Opus, G.729, AMR available via CGO build tags (`-tags opus`, `-tags g729`, `-tags amr`) linking libopus, bcg729, opencore-amrnb respectively
+- **T.38 Fax Gateway**: Full UDPTL relay with IFP packet parsing, redundancy, SDP parsing/generation, session lifecycle management, and UDP socket forwarding
+- **Direction-Based Interface Selection**: Named network interfaces with separate bind/advertise IPs — SIP proxy sends `direction` array to select internal vs external media addresses
 - **SIPREC**: RFC 7865/7866 metadata parsing and session structures (recording output wired via media relay)
+- **Multi-Stream**: Video and additional media streams supported via per-session `StreamPair` entries, each with independent relay
 
 ### Call Recording
 
@@ -277,6 +282,28 @@ Step-by-step guides for common tasks:
 - [NG Protocol Reference](./docs/reference/ng-protocol.md) - Complete protocol specification
 - [Environment Variables](./docs/reference/environment-variables.md) - All supported variables
 
+### CLI Tool
+
+Karl ships with `karl-ctl`, a command-line interface for managing sessions, viewing stats, and controlling recording:
+
+```bash
+# Build the CLI
+go build -o karl-ctl ./cmd/karl-ctl/
+
+# Usage
+karl-ctl ping                      # Health check
+karl-ctl sessions                  # List active sessions
+karl-ctl session <id>              # Session details
+karl-ctl stats                     # Server statistics
+karl-ctl delete <id>               # Delete a session
+karl-ctl recording start <id>      # Start recording
+karl-ctl recording stop <id>       # Stop recording
+
+# Flags
+karl-ctl -addr http://host:8080 sessions   # Custom API address
+karl-ctl -json stats                        # Raw JSON output
+```
+
 ---
 
 ## Installation
@@ -383,6 +410,21 @@ Karl uses a JSON configuration file with sensible defaults. All settings can als
     "mysql_dsn": "",
     "redis_enabled": false,
     "redis_addr": "redis:6379"
+  },
+  "integration": {
+    "media_ip": "10.0.0.5",
+    "interfaces": {
+      "internal": { "address": "10.0.0.5", "advertise_addr": "10.0.0.5" },
+      "external": { "address": "10.0.0.5", "advertise_addr": "198.51.100.10" }
+    }
+  },
+  "hep": {
+    "hep_enabled": false,
+    "hep_server": "homer:9060"
+  },
+  "cluster": {
+    "enabled": false,
+    "node_id": "karl-1"
   }
 }
 ```
@@ -713,11 +755,16 @@ Karl is optimized for high-throughput media processing:
 - **NG Protocol Handler** (`ng_socket_listener.go`): Processes bencode commands from SIP proxies over UDP/Unix socket
 - **Command Handlers** (`ng_protocol/commands/`): Offer, Answer, Delete, Query — create sessions, allocate ports, build SDP
 - **Session Manager** (`session_manager.go`): Tracks call state, legs, SSRC indexes, TTL cleanup
-- **Media Relay** (`media_relay.go`): Per-session RTP forwarding between call legs with NAT handling (symmetric RTP, port latching, media handover, strict-source), media blocking/silencing, recording hooks, and media timeout detection
+- **Media Relay** (`media_relay.go`): Per-session RTP/RTCP forwarding between call legs with SRTP/SRTCP encrypt/decrypt, NAT handling (symmetric RTP, port latching, media handover, strict-source), media blocking/silencing, recording hooks, and media timeout detection
+- **ICE Agent** (`ice_agent.go`): Per-session ICE negotiation with STUN/TURN candidate gathering, connectivity checks, and candidate pair selection via pion/ice
 - **Recording Manager** (`recording/`): WAV file writing with mixed/stereo/separate modes, wired to relay via OnPacket hook
-- **RTCP Handler** (`rtcp_handler.go`): Quality monitoring with jitter, loss, RTT calculation
+- **RTCP Handler** (`rtcp_handler.go`): Quality monitoring with jitter, loss, RTT, MOS calculation (ITU-T G.107)
+- **T.38 Gateway** (`t38_gateway.go`): UDPTL relay with IFP parsing, redundancy, SDP generation, and fax session lifecycle
+- **HEP Exporter** (`hep.go`): HEPv3 packet export to Homer/SIPVicious capture servers
+- **Cluster Manager** (`cluster_manager.go`): Redis-backed session failover with split-brain detection and consistent hashing
 - **FEC Handler** (`fec_handler.go`): XOR-based forward error correction
 - **Jitter Buffer** (`jitter_buffer.go`): Adaptive buffering (20-200ms) with sequence reordering
+- **CLI Tool** (`cmd/karl-ctl/`): Command-line interface for session management, stats, recording, and health checks
 
 ---
 
@@ -738,17 +785,24 @@ Karl is a full-featured rtpengine replacement. See the detailed [ROADMAP.md](./R
 - [x] Media blocking, silencing, media timeout auto-delete
 - [x] Recording hook wired into media relay path
 
-### Phase 3: Enterprise Features (Partial)
+### Phase 3: Enterprise Features ✅ Complete
 - [x] Call recording: WAV output, mixed/stereo/separate modes, wired to media path
 - [x] G.711 PCMU↔PCMA transcoding (lookup table)
-- [x] Redis session caching structures
-- [ ] Opus/G.729/AMR transcoding (stubs present, need native codec libraries)
-- [ ] SRTP↔RTP gateway (DTLS handshake + key derivation not yet wired to relay)
-- [ ] T.38 fax gateway (detection present, gateway not wired)
-- [ ] Multi-node failover (structures present, not production tested)
+- [x] Opus/G.729/AMR transcoding via CGO build tags (libopus, bcg729, opencore-amrnb)
+- [x] SRTP↔RTP gateway: per-leg encrypt/decrypt wired into media relay (SDES + DTLS key paths)
+- [x] SRTCP encryption for RTCP forwarding
+- [x] T.38 fax gateway: UDPTL relay, IFP parsing, SDP parsing/generation, UDP socket forwarding
+- [x] Full ICE agent: STUN/TURN candidate gathering, connectivity checks, candidate pair selection
+- [x] Codec negotiation (RFC 3264): intersection with offerer preference ordering
+- [x] MOS calculation (ITU-T G.107 E-model) from RTCP jitter/loss/RTT
+- [x] Direction-based interface selection: bind vs advertise IP, internal/external routing
+- [x] Multi-stream support: video and additional media via StreamPair
+- [x] Redis cluster: session store + pub/sub + split-brain detection + failover
+- [x] HEP/Homer: HEPv3 exporter for SIP/RTCP capture
+- [x] CLI tool: `karl-ctl` for session management, stats, recording, health
 
 ### Phase 4: Operational Maturity ✅ Complete
-- [x] 926+ tests with race detection, zero failures
+- [x] 1300+ tests with race detection, zero failures
 - [x] Panic recovery in relay goroutines
 - [x] Resource leak protection (port cleanup on error, MaxSessions enforcement)
 - [x] Security: rate limiting, API auth, DoS protection, circuit breakers

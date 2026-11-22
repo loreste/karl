@@ -19,6 +19,8 @@ Karl uses a JSON configuration file with sensible defaults. All settings can be 
   - [Database](#database)
   - [SRTP](#srtp)
   - [Alerts](#alerts)
+  - [HEP / Homer](#hep--homer)
+  - [Cluster](#cluster)
 - [Environment Variables](#environment-variables)
 
 ---
@@ -192,6 +194,22 @@ When configuration changes are detected, Karl logs the applied changes. Check th
     "notify_admin": false,
     "admin_email": "",
     "slack_webhook": ""
+  },
+
+  "hep": {
+    "hep_enabled": false,
+    "hep_server": "homer:9060",
+    "hep_capture_id": 1,
+    "hep_proto": "udp"
+  },
+
+  "cluster": {
+    "enabled": false,
+    "node_id": "karl-1",
+    "node_address": "10.0.0.5:22222",
+    "quorum_size": 2,
+    "replication_factor": 2,
+    "enable_fencing": false
   }
 }
 ```
@@ -623,6 +641,63 @@ Controls quality alerting thresholds.
 | `notify_admin` | bool | `false` | Send alert notifications |
 | `admin_email` | string | | Email for alerts |
 | `slack_webhook` | string | | Slack webhook URL for alerts |
+
+### HEP / Homer
+
+Controls the HEPv3 exporter for sending SIP and RTCP packets to a Homer capture server.
+
+```json
+{
+  "hep": {
+    "hep_enabled": true,
+    "hep_server": "homer.example.com:9060",
+    "hep_capture_id": 1,
+    "hep_proto": "udp"
+  }
+}
+```
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `hep_enabled` | bool | `false` | Enable HEP exporter |
+| `hep_server` | string | | Homer capture server address (host:port) |
+| `hep_capture_id` | int | `0` | Capture agent ID sent in HEP packets |
+| `hep_proto` | string | `udp` | Transport protocol to Homer (`udp` or `tcp`) |
+
+### Cluster
+
+Controls multi-node clustering with Redis-backed session failover, split-brain detection, and consistent hashing.
+
+```json
+{
+  "cluster": {
+    "enabled": true,
+    "node_id": "karl-1",
+    "node_address": "10.0.0.5:22222",
+    "quorum_size": 2,
+    "replication_factor": 2,
+    "enable_fencing": true
+  }
+}
+```
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `enabled` | bool | `false` | Enable clustering |
+| `node_id` | string | | Unique identifier for this node |
+| `node_address` | string | | This node's address (reachable by other nodes) |
+| `quorum_size` | int | `2` | Minimum nodes for quorum |
+| `replication_factor` | int | `2` | Session replication factor on the hash ring |
+| `enable_fencing` | bool | `false` | Enable node fencing on partition detection |
+
+**Prerequisites**: Redis must be enabled in the `database` section. The cluster manager uses Redis for session storage, pub/sub coordination, heartbeats, and split-brain detection.
+
+**How failover works**:
+1. Each node sends heartbeats to Redis every second
+2. If a node misses 3 heartbeats, it's marked as failed
+3. The split-brain detector checks quorum before allowing takeover
+4. Surviving nodes redistribute the failed node's sessions via consistent hashing
+5. Ports are re-allocated and media relays restarted on the new owner
 
 ---
 
