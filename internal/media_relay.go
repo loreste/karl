@@ -213,7 +213,7 @@ func (r *MediaRelay) readLoop(src, dst *CallLeg) {
 	}
 }
 
-// rtcpReadLoop forwards RTCP packets between legs.
+// rtcpReadLoop forwards RTCP packets between legs with optional SRTCP encrypt/decrypt.
 func (r *MediaRelay) rtcpReadLoop(src, dst *CallLeg) {
 	defer r.wg.Done()
 	defer func() {
@@ -223,6 +223,7 @@ func (r *MediaRelay) rtcpReadLoop(src, dst *CallLeg) {
 	}()
 
 	buf := make([]byte, 1500)
+	cryptoBuf := make([]byte, 1520)
 
 	for {
 		select {
@@ -245,6 +246,26 @@ func (r *MediaRelay) rtcpReadLoop(src, dst *CallLeg) {
 			}
 		}
 
+		pkt := buf[:n]
+
+		// SRTCP decryption
+		if src.Crypto != nil && src.Crypto.SRTCPDecryptCtx != nil && n >= 8 {
+			decrypted, decErr := src.Crypto.SRTCPDecryptCtx.DecryptRTCP(cryptoBuf[:0], pkt, nil)
+			if decErr == nil {
+				pkt = decrypted
+				n = len(decrypted)
+			}
+		}
+
+		// SRTCP encryption
+		if dst.Crypto != nil && dst.Crypto.SRTCPEncryptCtx != nil && n >= 8 {
+			encrypted, encErr := dst.Crypto.SRTCPEncryptCtx.EncryptRTCP(cryptoBuf[:0], pkt[:n], nil)
+			if encErr == nil {
+				pkt = encrypted
+				n = len(encrypted)
+			}
+		}
+
 		// Determine RTCP destination
 		dst.mu.Lock()
 		dstIP := dst.IP
@@ -255,7 +276,7 @@ func (r *MediaRelay) rtcpReadLoop(src, dst *CallLeg) {
 		}
 
 		dstAddr := &net.UDPAddr{IP: dstIP, Port: dstRTCPPort}
-		dst.RTCPConn.WriteToUDP(buf[:n], dstAddr)
+		dst.RTCPConn.WriteToUDP(pkt[:n], dstAddr)
 	}
 }
 

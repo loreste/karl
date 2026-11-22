@@ -43,6 +43,8 @@ type KarlServer struct {
 	rtcpHandler      *internal.RTCPHandler
 	fecHandler       *internal.FECHandler
 	recordingManager *recording.Manager
+	clusterManager   *internal.ClusterManager
+	hepExporter      *internal.HEPExporter
 }
 
 // NewKarlServer creates and initializes a new KarlServer instance

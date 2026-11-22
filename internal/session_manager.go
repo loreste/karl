@@ -90,6 +90,19 @@ type CallLeg struct {
 	Crypto *LegCrypto
 }
 
+// SetDTLSKeys creates SRTP/SRTCP crypto contexts from DTLS-extracted keys.
+// Called after a DTLS handshake completes to enable encrypted media relay.
+func (cl *CallLeg) SetDTLSKeys(localKey, localSalt, remoteKey, remoteSalt []byte) error {
+	crypto, err := NewLegCryptoFromKeys(remoteKey, remoteSalt, localKey, localSalt)
+	if err != nil {
+		return err
+	}
+	cl.mu.Lock()
+	cl.Crypto = crypto
+	cl.mu.Unlock()
+	return nil
+}
+
 // SetRemoteAddr sets the remote IP and port (thread-safe).
 func (cl *CallLeg) SetRemoteAddr(ip net.IP, port int) {
 	cl.mu.Lock()
@@ -230,6 +243,18 @@ type MediaSession struct {
 
 	// Media relay (per-session RTP forwarding)
 	Relay *MediaRelay
+
+	// Additional media streams (video, application, etc.)
+	// Each entry is a stream index → pair of call legs.
+	ExtraStreams map[int]*StreamPair
+}
+
+// StreamPair holds a caller/callee leg pair for one media stream (e.g., video).
+type StreamPair struct {
+	CallerLeg *CallLeg
+	CalleeLeg *CallLeg
+	MediaType MediaType
+	Relay     *MediaRelay
 }
 
 // SessionRecording holds recording state for a session
@@ -360,7 +385,8 @@ func (sr *SessionRegistry) CreateSession(callID, fromTag string) *MediaSession {
 		Stats:        &SessionStats{StartTime: time.Now()},
 		Flags:        make(map[string]bool),
 		Metadata:     make(map[string]string),
-		SIPRECMeta:   make(map[string]string),
+		SIPRECMeta:    make(map[string]string),
+		ExtraStreams:  make(map[int]*StreamPair),
 		CreatedAt:    time.Now(),
 		UpdatedAt:    time.Now(),
 		TOS:          -1, // Not set
@@ -562,11 +588,16 @@ func (sr *SessionRegistry) removeSessionLocked(sessionID string) error {
 		return fmt.Errorf("session not found: %s", sessionID)
 	}
 
-	// Stop media relay BEFORE acquiring session lock to avoid deadlock:
+	// Stop media relays BEFORE acquiring session lock to avoid deadlock:
 	// Relay.Stop() calls wg.Wait(), and relay goroutines acquire session.mu.RLock()
 	// in the timeout loop. If we hold session.mu.Lock here, that deadlocks.
 	if session.Relay != nil {
 		session.Relay.Stop()
+	}
+	for _, sp := range session.ExtraStreams {
+		if sp.Relay != nil {
+			sp.Relay.Stop()
+		}
 	}
 
 	session.mu.Lock()

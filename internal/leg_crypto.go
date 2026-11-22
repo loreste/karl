@@ -8,15 +8,18 @@ import (
 	"github.com/pion/srtp/v2"
 )
 
-// LegCrypto holds per-leg SRTP encryption/decryption contexts.
+// LegCrypto holds per-leg SRTP/SRTCP encryption/decryption contexts.
 // DecryptCtx decrypts incoming packets from the peer (using peer's SDES key).
 // EncryptCtx encrypts outgoing packets to the peer (using our generated key).
+// SRTCP contexts use the same key material but separate state for RTCP packets.
 type LegCrypto struct {
-	DecryptCtx *srtp.Context
-	EncryptCtx *srtp.Context
+	DecryptCtx     *srtp.Context
+	EncryptCtx     *srtp.Context
+	SRTCPDecryptCtx *srtp.Context
+	SRTCPEncryptCtx *srtp.Context
 }
 
-// NewLegCrypto creates SRTP contexts for a call leg from base64-encoded SDES keys.
+// NewLegCrypto creates SRTP and SRTCP contexts for a call leg from base64-encoded SDES keys.
 func NewLegCrypto(peerKeyB64, ourKeyB64 string) (*LegCrypto, error) {
 	lc := &LegCrypto{}
 
@@ -25,11 +28,13 @@ func NewLegCrypto(peerKeyB64, ourKeyB64 string) (*LegCrypto, error) {
 		if err != nil {
 			return nil, fmt.Errorf("decode peer SDES key: %w", err)
 		}
-		ctx, err := srtp.CreateContext(key, salt, srtp.ProtectionProfileAes128CmHmacSha1_80)
-		if err != nil {
-			return nil, fmt.Errorf("create decrypt context: %w", err)
+		if lc.DecryptCtx, err = srtp.CreateContext(key, salt, srtp.ProtectionProfileAes128CmHmacSha1_80); err != nil {
+			return nil, fmt.Errorf("create SRTP decrypt context: %w", err)
 		}
-		lc.DecryptCtx = ctx
+		// SRTCP uses same key material but separate state
+		if lc.SRTCPDecryptCtx, err = srtp.CreateContext(key, salt, srtp.ProtectionProfileAes128CmHmacSha1_80); err != nil {
+			return nil, fmt.Errorf("create SRTCP decrypt context: %w", err)
+		}
 	}
 
 	if ourKeyB64 != "" {
@@ -37,11 +42,39 @@ func NewLegCrypto(peerKeyB64, ourKeyB64 string) (*LegCrypto, error) {
 		if err != nil {
 			return nil, fmt.Errorf("decode our SDES key: %w", err)
 		}
-		ctx, err := srtp.CreateContext(key, salt, srtp.ProtectionProfileAes128CmHmacSha1_80)
-		if err != nil {
-			return nil, fmt.Errorf("create encrypt context: %w", err)
+		if lc.EncryptCtx, err = srtp.CreateContext(key, salt, srtp.ProtectionProfileAes128CmHmacSha1_80); err != nil {
+			return nil, fmt.Errorf("create SRTP encrypt context: %w", err)
 		}
-		lc.EncryptCtx = ctx
+		if lc.SRTCPEncryptCtx, err = srtp.CreateContext(key, salt, srtp.ProtectionProfileAes128CmHmacSha1_80); err != nil {
+			return nil, fmt.Errorf("create SRTCP encrypt context: %w", err)
+		}
+	}
+
+	return lc, nil
+}
+
+// NewLegCryptoFromKeys creates SRTP/SRTCP contexts from raw key and salt bytes.
+// Used when keys come from DTLS-SRTP handshake rather than SDES SDP attributes.
+func NewLegCryptoFromKeys(decryptKey, decryptSalt, encryptKey, encryptSalt []byte) (*LegCrypto, error) {
+	lc := &LegCrypto{}
+	var err error
+
+	if len(decryptKey) > 0 && len(decryptSalt) > 0 {
+		if lc.DecryptCtx, err = srtp.CreateContext(decryptKey, decryptSalt, srtp.ProtectionProfileAes128CmHmacSha1_80); err != nil {
+			return nil, fmt.Errorf("create SRTP decrypt context: %w", err)
+		}
+		if lc.SRTCPDecryptCtx, err = srtp.CreateContext(decryptKey, decryptSalt, srtp.ProtectionProfileAes128CmHmacSha1_80); err != nil {
+			return nil, fmt.Errorf("create SRTCP decrypt context: %w", err)
+		}
+	}
+
+	if len(encryptKey) > 0 && len(encryptSalt) > 0 {
+		if lc.EncryptCtx, err = srtp.CreateContext(encryptKey, encryptSalt, srtp.ProtectionProfileAes128CmHmacSha1_80); err != nil {
+			return nil, fmt.Errorf("create SRTP encrypt context: %w", err)
+		}
+		if lc.SRTCPEncryptCtx, err = srtp.CreateContext(encryptKey, encryptSalt, srtp.ProtectionProfileAes128CmHmacSha1_80); err != nil {
+			return nil, fmt.Errorf("create SRTCP encrypt context: %w", err)
+		}
 	}
 
 	return lc, nil

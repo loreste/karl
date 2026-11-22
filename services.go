@@ -64,8 +64,65 @@ func (k *KarlServer) initializeServices() error {
 	// Start SIP registration with cancelable context
 	k.startSIPRegistration()
 
+	// Initialize Cluster Manager (requires Redis)
+	k.initializeCluster()
+
+	// Initialize HEP/Homer exporter
+	k.initializeHEP()
+
 	log.Println("All services initialized successfully")
 	return nil
+}
+
+// initializeCluster starts the cluster manager if Redis and clustering are enabled.
+func (k *KarlServer) initializeCluster() {
+	k.mu.RLock()
+	config := k.config
+	k.mu.RUnlock()
+
+	if config.Cluster == nil || !config.Cluster.Enabled || k.redisCache == nil || k.redisCache.Client == nil {
+		return
+	}
+
+	adapter := internal.NewRedisGoAdapter(k.redisCache.Client)
+	clusterCfg := internal.DefaultClusterConfig(
+		config.Cluster.NodeID,
+		config.Cluster.NodeAddress,
+		adapter,
+	)
+	if config.Cluster.QuorumSize > 0 {
+		clusterCfg.QuorumSize = config.Cluster.QuorumSize
+	}
+	if config.Cluster.ReplicationFactor > 0 {
+		clusterCfg.ReplicationFactor = config.Cluster.ReplicationFactor
+	}
+	clusterCfg.EnableFencing = config.Cluster.EnableFencing
+
+	k.clusterManager = internal.NewClusterManager(clusterCfg)
+	if err := k.clusterManager.Start(k.ctx); err != nil {
+		log.Printf("Warning: cluster manager failed to start: %v", err)
+		return
+	}
+	log.Println("Cluster manager initialized")
+}
+
+// initializeHEP starts the HEP/Homer exporter if configured.
+func (k *KarlServer) initializeHEP() {
+	k.mu.RLock()
+	config := k.config
+	k.mu.RUnlock()
+
+	if config.HEP == nil || !config.HEP.Enabled || config.HEP.ServerAddr == "" {
+		return
+	}
+
+	exporter, err := internal.NewHEPExporter(*config.HEP)
+	if err != nil {
+		log.Printf("Warning: HEP exporter failed to connect: %v", err)
+		return
+	}
+	k.hepExporter = exporter
+	log.Printf("HEP exporter connected to %s", config.HEP.ServerAddr)
 }
 
 // initializeSessionRegistry initializes the session registry

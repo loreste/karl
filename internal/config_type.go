@@ -206,6 +206,18 @@ type Config struct {
 	JitterBuffer  *JitterBufferConfig `json:"jitter_buffer"`
 	RTCP          *RTCPConfig         `json:"rtcp"`
 	FEC           *FECConfig          `json:"fec"`
+	HEP           *HEPConfig          `json:"hep"`
+	Cluster       *ClusterConfigJSON  `json:"cluster"`
+}
+
+// ClusterConfigJSON is the JSON-serializable cluster configuration.
+type ClusterConfigJSON struct {
+	Enabled           bool   `json:"enabled"`
+	NodeID            string `json:"node_id"`
+	NodeAddress       string `json:"node_address"`
+	QuorumSize        int    `json:"quorum_size"`
+	ReplicationFactor int    `json:"replication_factor"`
+	EnableFencing     bool   `json:"enable_fencing"`
 }
 
 // GetNGProtocolConfig returns NG protocol config with defaults
