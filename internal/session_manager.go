@@ -85,6 +85,9 @@ type CallLeg struct {
 	// T.38
 	T38Enabled    bool
 	T38Gateway    bool
+
+	// SRTP crypto contexts (populated when SDES or DTLS keys are available)
+	Crypto *LegCrypto
 }
 
 // SetRemoteAddr sets the remote IP and port (thread-safe).

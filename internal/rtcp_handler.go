@@ -614,6 +614,12 @@ func (s *RTCPSessionHandler) GetStats() RTCPStats {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	jitterSec := s.jitter / float64(s.clockRate) // Convert to seconds
+	var lossPercent float64
+	if s.packetsRecv > 0 {
+		lossPercent = float64(s.packetsLost) / float64(s.packetsRecv+uint32(s.packetsLost)) * 100
+	}
+
 	return RTCPStats{
 		SSRC:          s.ssrc,
 		PacketsSent:   s.packetsSent,
@@ -621,8 +627,9 @@ func (s *RTCPSessionHandler) GetStats() RTCPStats {
 		PacketsRecv:   s.packetsRecv,
 		PacketsLost:   s.packetsLost,
 		FractionLost:  s.fractionLost,
-		Jitter:        s.jitter / float64(s.clockRate), // Convert to seconds
+		Jitter:        jitterSec,
 		RTT:           s.rtt,
+		MOS:           CalculateMOS(lossPercent, jitterSec*1000, float64(s.rtt.Milliseconds())),
 	}
 }
 
@@ -636,6 +643,41 @@ type RTCPStats struct {
 	FractionLost uint8
 	Jitter       float64
 	RTT          time.Duration
+	MOS          float64 // Estimated Mean Opinion Score (1.0-4.5)
+}
+
+// CalculateMOS computes an estimated MOS from packet loss, jitter, and RTT
+// using the E-model simplified formula (ITU-T G.107).
+func CalculateMOS(packetLossPercent float64, jitterMs float64, rttMs float64) float64 {
+	// R-factor calculation (simplified E-model)
+	// R = 93.2 - Id - Ie
+	// Id = delay impairment, Ie = equipment/loss impairment
+	effectiveLatency := rttMs + jitterMs*2 + 10 // 10ms codec delay
+	var id float64
+	if effectiveLatency < 160 {
+		id = effectiveLatency / 40.0
+	} else {
+		id = (effectiveLatency - 120) / 10.0
+	}
+	ie := 30.0 * (1 - 1/(1+packetLossPercent)) // loss impairment
+	r := 93.2 - id - ie
+
+	// Clamp R to [0, 100]
+	if r < 0 {
+		r = 0
+	} else if r > 100 {
+		r = 100
+	}
+
+	// Convert R-factor to MOS (ITU-T G.107 Annex B)
+	if r < 6.5 {
+		return 1.0
+	}
+	mos := 1 + 0.035*r + r*(r-60)*(100-r)*7e-6
+	if mos > 4.5 {
+		mos = 4.5
+	}
+	return mos
 }
 
 // calculateRTPTimestamp calculates RTP timestamp from wall clock

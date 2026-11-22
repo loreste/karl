@@ -6,6 +6,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/pion/rtp"
 )
 
 // MediaRelay handles per-session RTP/RTCP forwarding between two call legs.
@@ -40,9 +42,17 @@ func (r *MediaRelay) Start() {
 		return
 	}
 
+	// RTP forwarding
 	r.wg.Add(2)
 	go r.readLoop(caller, callee)
 	go r.readLoop(callee, caller)
+
+	// RTCP forwarding (if both legs have RTCP sockets)
+	if caller.RTCPConn != nil && callee.RTCPConn != nil {
+		r.wg.Add(2)
+		go r.rtcpReadLoop(caller, callee)
+		go r.rtcpReadLoop(callee, caller)
+	}
 
 	if mediaTimeout > 0 {
 		r.wg.Add(1)
@@ -63,6 +73,7 @@ func (r *MediaRelay) readLoop(src, dst *CallLeg) {
 	}()
 
 	buf := make([]byte, 1500)
+	cryptoBuf := make([]byte, 1520) // extra space for SRTP auth tag
 	latched := false
 
 	// Read initial expected address from SDP (used by strict-source)
@@ -136,10 +147,34 @@ func (r *MediaRelay) readLoop(src, dst *CallLeg) {
 			continue
 		}
 
+		// --- SRTP decryption (incoming from src peer) ---
+		pkt := buf[:n]
+		if src.Crypto != nil && src.Crypto.DecryptCtx != nil && n >= 12 {
+			decrypted, decErr := src.Crypto.DecryptCtx.DecryptRTP(cryptoBuf[:0], pkt, nil)
+			if decErr != nil {
+				// Can't decrypt — drop packet
+				continue
+			}
+			pkt = decrypted
+			n = len(decrypted)
+		}
+
 		// Silencing: zero payload but keep RTP header (first 12 bytes)
 		if silenced && n > 12 {
 			for i := 12; i < n; i++ {
-				buf[i] = 0
+				pkt[i] = 0
+			}
+		}
+
+		// --- SRTP encryption (outgoing to dst peer) ---
+		if dst.Crypto != nil && dst.Crypto.EncryptCtx != nil && n >= 12 {
+			var hdr rtp.Header
+			if _, parseErr := hdr.Unmarshal(pkt[:n]); parseErr == nil {
+				encrypted, encErr := dst.Crypto.EncryptCtx.EncryptRTP(cryptoBuf[:0], pkt[:n], &hdr)
+				if encErr == nil {
+					pkt = encrypted
+					n = len(encrypted)
+				}
 			}
 		}
 
@@ -154,7 +189,7 @@ func (r *MediaRelay) readLoop(src, dst *CallLeg) {
 
 		dstAddr := &net.UDPAddr{IP: dstIP, Port: dstPort}
 
-		_, writeErr := dst.Conn.WriteToUDP(buf[:n], dstAddr)
+		_, writeErr := dst.Conn.WriteToUDP(pkt[:n], dstAddr)
 		if writeErr != nil {
 			atomic.AddUint32(&src.PacketsLost, 1)
 			continue
@@ -171,10 +206,56 @@ func (r *MediaRelay) readLoop(src, dst *CallLeg) {
 
 		// Packet hook (recording, metrics)
 		if r.OnPacket != nil {
-			pkt := make([]byte, n)
-			copy(pkt, buf[:n])
-			r.OnPacket(r.session, src, pkt)
+			hook := make([]byte, n)
+			copy(hook, pkt[:n])
+			r.OnPacket(r.session, src, hook)
 		}
+	}
+}
+
+// rtcpReadLoop forwards RTCP packets between legs.
+func (r *MediaRelay) rtcpReadLoop(src, dst *CallLeg) {
+	defer r.wg.Done()
+	defer func() {
+		if rv := recover(); rv != nil {
+			log.Printf("MediaRelay: panic in rtcpReadLoop for session %s: %v", r.session.ID, rv)
+		}
+	}()
+
+	buf := make([]byte, 1500)
+
+	for {
+		select {
+		case <-r.stopCh:
+			return
+		default:
+		}
+
+		src.RTCPConn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+		n, _, err := src.RTCPConn.ReadFromUDP(buf)
+		if err != nil {
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				continue
+			}
+			select {
+			case <-r.stopCh:
+				return
+			default:
+				return
+			}
+		}
+
+		// Determine RTCP destination
+		dst.mu.Lock()
+		dstIP := dst.IP
+		dstRTCPPort := dst.RTCPPort
+		dst.mu.Unlock()
+		if dstIP == nil || dstRTCPPort == 0 {
+			continue
+		}
+
+		dstAddr := &net.UDPAddr{IP: dstIP, Port: dstRTCPPort}
+		dst.RTCPConn.WriteToUDP(buf[:n], dstAddr)
 	}
 }
 

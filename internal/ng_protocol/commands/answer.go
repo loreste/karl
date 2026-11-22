@@ -261,8 +261,28 @@ func (h *AnswerHandler) processAnswerSDP(session *internal.MediaSession, sdp str
 	// Handle SRTP/DTLS based on flags
 	h.handleSRTPDTLS(calleeLeg, parsedSDP, flags)
 
-	// Process codecs with filtering
+	// Set up SRTP crypto contexts when SDES keys are available
+	var ourSDESKey string
+	if calleeLeg.SRTPParams != nil && !calleeLeg.SRTPParams.DTLS && parsedSDP.HasSRTP && !flags.SDESOff {
+		ourSDESKey = internal.GenerateSDESKeyPair()
+		crypto, cryptoErr := internal.NewLegCrypto(parsedSDP.CryptoKey, ourSDESKey)
+		if cryptoErr != nil {
+			log.Printf("Warning: failed to create SRTP crypto for callee: %v", cryptoErr)
+		} else {
+			calleeLeg.Crypto = crypto
+		}
+	}
+
+	// Process codecs with filtering and negotiation
 	calleeLeg.Codecs = h.processCodecs(parsedSDP.Codecs, flags)
+
+	// Negotiate codecs: intersect callee codecs with caller's codec set (RFC 3264)
+	session.Lock()
+	callerLeg := session.CallerLeg
+	session.Unlock()
+	if callerLeg != nil {
+		calleeLeg.Codecs = negotiateCodecs(callerLeg.Codecs, calleeLeg.Codecs)
+	}
 
 	// Set callee leg on session
 	if err := h.sessionRegistry.SetCalleeLeg(session.ID, calleeLeg); err != nil {
@@ -276,7 +296,7 @@ func (h *AnswerHandler) processAnswerSDP(session *internal.MediaSession, sdp str
 	}
 
 	// Build modified SDP with advertise IP (what peers see)
-	modifiedSDP := h.buildModifiedSDP(parsedSDP, advertiseIP, rtpPort, flags, session)
+	modifiedSDP := h.buildModifiedSDP(parsedSDP, advertiseIP, rtpPort, flags, session, ourSDESKey)
 
 	// Build stream info for response with advertise IP
 	streams := h.buildStreamInfo(calleeLeg, advertiseIP, rtpPort, rtcpPort, flags, parsedSDP)
@@ -444,7 +464,7 @@ func (h *AnswerHandler) buildStreamInfo(leg *internal.CallLeg, localIP string, r
 }
 
 // buildModifiedSDP creates the modified SDP for the answer response
-func (h *AnswerHandler) buildModifiedSDP(parsed *ParsedSDP, localIP string, localPort int, flags *ng.ParsedFlags, session *internal.MediaSession) string {
+func (h *AnswerHandler) buildModifiedSDP(parsed *ParsedSDP, localIP string, localPort int, flags *ng.ParsedFlags, session *internal.MediaSession, sdesKey ...string) string {
 	var sb strings.Builder
 
 	// Version
@@ -535,7 +555,11 @@ func (h *AnswerHandler) buildModifiedSDP(parsed *ParsedSDP, localIP string, loca
 	}
 
 	// DTLS/SRTP attributes
-	h.writeSecurityAttributes(&sb, parsed, flags)
+	var key string
+	if len(sdesKey) > 0 {
+		key = sdesKey[0]
+	}
+	h.writeSecurityAttributes(&sb, parsed, flags, key)
 
 	// MID attribute if present
 	if parsed.MID != "" {
@@ -656,8 +680,8 @@ func (h *AnswerHandler) writeICEAttributes(sb *strings.Builder, localIP string, 
 		localIP, localPort))
 }
 
-// writeSecurityAttributes writes DTLS/SRTP SDP attributes
-func (h *AnswerHandler) writeSecurityAttributes(sb *strings.Builder, parsed *ParsedSDP, flags *ng.ParsedFlags) {
+// writeSecurityAttributes writes DTLS/SRTP SDP attributes.
+func (h *AnswerHandler) writeSecurityAttributes(sb *strings.Builder, parsed *ParsedSDP, flags *ng.ParsedFlags, sdesKey string) {
 	// DTLS
 	if !flags.DTLSOff && parsed.HasDTLS {
 		sb.WriteString(fmt.Sprintf("a=fingerprint:%s\r\n", internal.GetDTLSFingerprint()))
@@ -683,8 +707,11 @@ func (h *AnswerHandler) writeSecurityAttributes(sb *strings.Builder, parsed *Par
 		if cryptoSuite == "" {
 			cryptoSuite = "AES_CM_128_HMAC_SHA1_80"
 		}
+		if sdesKey == "" {
+			sdesKey = generateSDESKey()
+		}
 		sb.WriteString(fmt.Sprintf("a=crypto:1 %s inline:%s\r\n",
-			cryptoSuite, generateSDESKey()))
+			cryptoSuite, sdesKey))
 	}
 }
 

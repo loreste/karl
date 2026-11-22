@@ -252,6 +252,18 @@ func (h *OfferHandler) processOfferSDP(session *internal.MediaSession, sdp strin
 	// Handle SRTP/DTLS based on flags
 	h.handleSRTPDTLS(callerLeg, parsedSDP, flags)
 
+	// Set up SRTP crypto contexts when SDES keys are available
+	var ourSDESKey string
+	if callerLeg.SRTPParams != nil && !callerLeg.SRTPParams.DTLS && parsedSDP.HasSRTP && !flags.SDESOff {
+		ourSDESKey = internal.GenerateSDESKeyPair()
+		crypto, cryptoErr := internal.NewLegCrypto(parsedSDP.CryptoKey, ourSDESKey)
+		if cryptoErr != nil {
+			log.Printf("Warning: failed to create SRTP crypto for caller: %v", cryptoErr)
+		} else {
+			callerLeg.Crypto = crypto
+		}
+	}
+
 	// Process codecs with filtering
 	callerLeg.Codecs = h.processCodecs(parsedSDP.Codecs, flags)
 
@@ -267,7 +279,7 @@ func (h *OfferHandler) processOfferSDP(session *internal.MediaSession, sdp strin
 	}
 
 	// Build modified SDP with advertise IP (what peers see)
-	modifiedSDP := h.buildModifiedSDP(parsedSDP, advertiseIP, rtpPort, flags)
+	modifiedSDP := h.buildModifiedSDP(parsedSDP, advertiseIP, rtpPort, flags, ourSDESKey)
 
 	// Build stream info for response with advertise IP
 	streams := h.buildStreamInfo(callerLeg, advertiseIP, rtpPort, rtcpPort, flags, parsedSDP)
@@ -467,7 +479,7 @@ func (h *OfferHandler) buildStreamInfo(leg *internal.CallLeg, localIP string, rt
 }
 
 // buildModifiedSDP creates the modified SDP for the offer response
-func (h *OfferHandler) buildModifiedSDP(parsed *ParsedSDP, localIP string, localPort int, flags *ng.ParsedFlags) string {
+func (h *OfferHandler) buildModifiedSDP(parsed *ParsedSDP, localIP string, localPort int, flags *ng.ParsedFlags, sdesKey ...string) string {
 	var sb strings.Builder
 
 	// Version
@@ -558,7 +570,11 @@ func (h *OfferHandler) buildModifiedSDP(parsed *ParsedSDP, localIP string, local
 	}
 
 	// DTLS/SRTP attributes
-	h.writeSecurityAttributes(&sb, parsed, flags)
+	var key string
+	if len(sdesKey) > 0 {
+		key = sdesKey[0]
+	}
+	h.writeSecurityAttributes(&sb, parsed, flags, key)
 
 	// MID attribute if requested
 	if flags.GenerateMID && parsed.MID != "" {
@@ -681,8 +697,9 @@ func (h *OfferHandler) writeICEAttributes(sb *strings.Builder, localIP string, l
 		localIP, localPort))
 }
 
-// writeSecurityAttributes writes DTLS/SRTP SDP attributes
-func (h *OfferHandler) writeSecurityAttributes(sb *strings.Builder, parsed *ParsedSDP, flags *ng.ParsedFlags) {
+// writeSecurityAttributes writes DTLS/SRTP SDP attributes.
+// If sdesKey is provided and non-empty, it's used instead of generating a new one.
+func (h *OfferHandler) writeSecurityAttributes(sb *strings.Builder, parsed *ParsedSDP, flags *ng.ParsedFlags, sdesKey string) {
 	// DTLS
 	if !flags.DTLSOff && parsed.HasDTLS {
 		sb.WriteString(fmt.Sprintf("a=fingerprint:%s\r\n", internal.GetDTLSFingerprint()))
@@ -703,8 +720,11 @@ func (h *OfferHandler) writeSecurityAttributes(sb *strings.Builder, parsed *Pars
 		if cryptoSuite == "" {
 			cryptoSuite = "AES_CM_128_HMAC_SHA1_80"
 		}
+		if sdesKey == "" {
+			sdesKey = generateSDESKey()
+		}
 		sb.WriteString(fmt.Sprintf("a=crypto:1 %s inline:%s\r\n",
-			cryptoSuite, generateSDESKey()))
+			cryptoSuite, sdesKey))
 	}
 }
 
