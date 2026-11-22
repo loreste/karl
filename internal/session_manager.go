@@ -88,6 +88,9 @@ type CallLeg struct {
 
 	// SRTP crypto contexts (populated when SDES or DTLS keys are available)
 	Crypto *LegCrypto
+
+	// ICE agent for this leg (nil when ICE is not negotiated or removed)
+	ICEAgent *ICESessionAgent
 }
 
 // SetDTLSKeys creates SRTP/SRTCP crypto contexts from DTLS-extracted keys.
@@ -625,21 +628,19 @@ func (sr *SessionRegistry) removeSessionLocked(sessionID string) error {
 		delete(sr.ssrcIndex, ssrc)
 	}
 
-	// Close connections
-	if session.CallerLeg != nil {
-		if session.CallerLeg.Conn != nil {
-			session.CallerLeg.Conn.Close()
+	// Close connections and ICE agents
+	for _, leg := range []*CallLeg{session.CallerLeg, session.CalleeLeg} {
+		if leg == nil {
+			continue
 		}
-		if session.CallerLeg.RTCPConn != nil {
-			session.CallerLeg.RTCPConn.Close()
+		if leg.ICEAgent != nil {
+			leg.ICEAgent.Close()
 		}
-	}
-	if session.CalleeLeg != nil {
-		if session.CalleeLeg.Conn != nil {
-			session.CalleeLeg.Conn.Close()
+		if leg.Conn != nil {
+			leg.Conn.Close()
 		}
-		if session.CalleeLeg.RTCPConn != nil {
-			session.CalleeLeg.RTCPConn.Close()
+		if leg.RTCPConn != nil {
+			leg.RTCPConn.Close()
 		}
 	}
 

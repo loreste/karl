@@ -67,8 +67,8 @@ func TestNewT38Gateway_WithConfig(t *testing.T) {
 func TestT38Gateway_CreateSession(t *testing.T) {
 	gw := NewT38Gateway(nil)
 
-	localIP := net.ParseIP("192.168.1.100")
-	session, err := gw.CreateSession("call-123", localIP, 5000)
+	localIP := net.ParseIP("127.0.0.1")
+	session, err := gw.CreateSession("call-123", localIP, 0)
 
 	if err != nil {
 		t.Fatalf("CreateSession failed: %v", err)
@@ -86,8 +86,8 @@ func TestT38Gateway_CreateSession(t *testing.T) {
 		t.Errorf("Expected LocalIP %v, got %v", localIP, session.LocalIP)
 	}
 
-	if session.LocalPort != 5000 {
-		t.Errorf("Expected LocalPort 5000, got %d", session.LocalPort)
+	if session.LocalPort == 0 {
+		t.Error("Expected non-zero LocalPort after auto-allocation")
 	}
 
 	if session.State != T38StateSetup {
@@ -106,11 +106,14 @@ func TestT38Gateway_CreateSession(t *testing.T) {
 func TestT38Gateway_SetRemoteEndpoint(t *testing.T) {
 	gw := NewT38Gateway(nil)
 
-	localIP := net.ParseIP("192.168.1.100")
-	session, _ := gw.CreateSession("call-123", localIP, 5000)
+	localIP := net.ParseIP("127.0.0.1")
+	session, err := gw.CreateSession("call-123", localIP, 0)
+	if err != nil {
+		t.Fatalf("CreateSession failed: %v", err)
+	}
 
-	remoteIP := net.ParseIP("192.168.1.200")
-	err := gw.SetRemoteEndpoint(session.ID, remoteIP, 6000)
+	remoteIP := net.ParseIP("127.0.0.2")
+	err = gw.SetRemoteEndpoint(session.ID, remoteIP, 6000)
 
 	if err != nil {
 		t.Fatalf("SetRemoteEndpoint failed: %v", err)
@@ -133,7 +136,7 @@ func TestT38Gateway_SetRemoteEndpoint(t *testing.T) {
 func TestT38Gateway_SetRemoteEndpoint_InvalidSession(t *testing.T) {
 	gw := NewT38Gateway(nil)
 
-	err := gw.SetRemoteEndpoint("nonexistent", net.ParseIP("192.168.1.200"), 6000)
+	err := gw.SetRemoteEndpoint("nonexistent", net.ParseIP("127.0.0.2"), 6000)
 	if err == nil {
 		t.Error("Expected error for nonexistent session")
 	}
@@ -149,7 +152,7 @@ func TestT38Gateway_GetSession(t *testing.T) {
 	}
 
 	// Existing session
-	session, _ := gw.CreateSession("call-123", net.ParseIP("192.168.1.100"), 5000)
+	session, _ := gw.CreateSession("call-123", net.ParseIP("127.0.0.1"), 0)
 	s, exists := gw.GetSession(session.ID)
 	if !exists {
 		t.Error("Expected true for existing session")
@@ -162,11 +165,11 @@ func TestT38Gateway_GetSession(t *testing.T) {
 func TestT38Gateway_GetSessionByCallID(t *testing.T) {
 	gw := NewT38Gateway(nil)
 
-	localIP := net.ParseIP("192.168.1.100")
-	s1, _ := gw.CreateSession("call-123", localIP, 5000)
-	gw.CreateSession("call-456", localIP, 5002)
+	localIP := net.ParseIP("127.0.0.1")
+	s1, _ := gw.CreateSession("call-123", localIP, 0)
+	gw.CreateSession("call-456", localIP, 0)
 	time.Sleep(1 * time.Millisecond) // Ensure unique timestamp
-	s2, _ := gw.CreateSession("call-123", localIP, 5004) // Another for same call
+	s2, _ := gw.CreateSession("call-123", localIP, 0) // Another for same call
 
 	// Verify both sessions were created with different IDs
 	if s1.ID == s2.ID {
@@ -182,8 +185,8 @@ func TestT38Gateway_GetSessionByCallID(t *testing.T) {
 func TestT38Gateway_ProcessPacket(t *testing.T) {
 	gw := NewT38Gateway(nil)
 
-	localIP := net.ParseIP("192.168.1.100")
-	session, _ := gw.CreateSession("call-123", localIP, 5000)
+	localIP := net.ParseIP("127.0.0.1")
+	session, _ := gw.CreateSession("call-123", localIP, 0)
 
 	// Create a simple T.38 packet (2 byte header + data)
 	packet := []byte{0x10, 0x01, 0xDE, 0xAD, 0xBE, 0xEF}
@@ -219,7 +222,7 @@ func TestT38Gateway_ProcessPacket_InvalidSession(t *testing.T) {
 func TestT38Gateway_ProcessPacket_ShortPacket(t *testing.T) {
 	gw := NewT38Gateway(nil)
 
-	session, _ := gw.CreateSession("call-123", net.ParseIP("192.168.1.100"), 5000)
+	session, _ := gw.CreateSession("call-123", net.ParseIP("127.0.0.1"), 0)
 
 	// Packet too short
 	_, err := gw.ProcessPacket(session.ID, []byte{0x10})
@@ -237,7 +240,12 @@ func TestT38Gateway_ProcessPacket_ShortPacket(t *testing.T) {
 func TestT38Gateway_SendPacket(t *testing.T) {
 	gw := NewT38Gateway(nil)
 
-	session, _ := gw.CreateSession("call-123", net.ParseIP("192.168.1.100"), 5000)
+	session, err := gw.CreateSession("call-123", net.ParseIP("127.0.0.1"), 0)
+	if err != nil {
+		t.Fatalf("CreateSession failed: %v", err)
+	}
+	// Set remote so SendPacket has a destination
+	gw.SetRemoteEndpoint(session.ID, net.ParseIP("127.0.0.1"), 19999)
 
 	ifp := &T38IFP{
 		Type:   T38IFPPrimaryV21,
@@ -245,7 +253,7 @@ func TestT38Gateway_SendPacket(t *testing.T) {
 		Data:   []byte{0xDE, 0xAD, 0xBE, 0xEF},
 	}
 
-	err := gw.SendPacket(session.ID, ifp)
+	err = gw.SendPacket(session.ID, ifp)
 	if err != nil {
 		t.Fatalf("SendPacket failed: %v", err)
 	}
@@ -269,7 +277,7 @@ func TestT38Gateway_SendPacket_InvalidSession(t *testing.T) {
 func TestT38Gateway_CompleteSession(t *testing.T) {
 	gw := NewT38Gateway(nil)
 
-	session, _ := gw.CreateSession("call-123", net.ParseIP("192.168.1.100"), 5000)
+	session, _ := gw.CreateSession("call-123", net.ParseIP("127.0.0.1"), 0)
 
 	err := gw.CompleteSession(session.ID)
 	if err != nil {
@@ -294,7 +302,7 @@ func TestT38Gateway_CompleteSession_InvalidSession(t *testing.T) {
 func TestT38Gateway_RemoveSession(t *testing.T) {
 	gw := NewT38Gateway(nil)
 
-	session, _ := gw.CreateSession("call-123", net.ParseIP("192.168.1.100"), 5000)
+	session, _ := gw.CreateSession("call-123", net.ParseIP("127.0.0.1"), 0)
 	gw.RemoveSession(session.ID)
 
 	_, exists := gw.GetSession(session.ID)
@@ -306,7 +314,7 @@ func TestT38Gateway_RemoveSession(t *testing.T) {
 func TestT38Gateway_GetStats(t *testing.T) {
 	gw := NewT38Gateway(nil)
 
-	session, _ := gw.CreateSession("call-123", net.ParseIP("192.168.1.100"), 5000)
+	session, _ := gw.CreateSession("call-123", net.ParseIP("127.0.0.1"), 0)
 
 	stats, err := gw.GetStats(session.ID)
 	if err != nil {
@@ -339,13 +347,13 @@ func TestT38Gateway_GetActiveCount(t *testing.T) {
 		t.Error("Initial active count should be 0")
 	}
 
-	localIP := net.ParseIP("192.168.1.100")
-	s1, _ := gw.CreateSession("call-1", localIP, 5000)
-	s2, _ := gw.CreateSession("call-2", localIP, 5002)
+	localIP := net.ParseIP("127.0.0.1")
+	s1, _ := gw.CreateSession("call-1", localIP, 0)
+	s2, _ := gw.CreateSession("call-2", localIP, 0)
 
 	// Set remote to make active
-	gw.SetRemoteEndpoint(s1.ID, net.ParseIP("192.168.1.200"), 6000)
-	gw.SetRemoteEndpoint(s2.ID, net.ParseIP("192.168.1.200"), 6002)
+	gw.SetRemoteEndpoint(s1.ID, net.ParseIP("127.0.0.2"), 6000)
+	gw.SetRemoteEndpoint(s2.ID, net.ParseIP("127.0.0.2"), 6002)
 
 	if gw.GetActiveCount() != 2 {
 		t.Errorf("Expected 2 active, got %d", gw.GetActiveCount())
@@ -360,10 +368,10 @@ func TestT38Gateway_GetActiveCount(t *testing.T) {
 func TestT38Gateway_Cleanup(t *testing.T) {
 	gw := NewT38Gateway(nil)
 
-	localIP := net.ParseIP("192.168.1.100")
-	s1, _ := gw.CreateSession("call-1", localIP, 5000)
-	s2, _ := gw.CreateSession("call-2", localIP, 5002)
-	gw.CreateSession("call-3", localIP, 5004) // Stays in setup
+	localIP := net.ParseIP("127.0.0.1")
+	s1, _ := gw.CreateSession("call-1", localIP, 0)
+	s2, _ := gw.CreateSession("call-2", localIP, 0)
+	gw.CreateSession("call-3", localIP, 0) // Stays in setup
 
 	gw.CompleteSession(s1.ID)
 	gw.CompleteSession(s2.ID)
@@ -384,7 +392,7 @@ func TestBuildT38SDP(t *testing.T) {
 		FillBitRemoval: true,
 	}
 
-	sdp := BuildT38SDP(config, "192.168.1.100", 5000)
+	sdp := BuildT38SDP(config, "127.0.0.1", 5000)
 
 	// Verify SDP contains expected attributes
 	if !strings.Contains(sdp, "m=image 5000 udptl t38") {
@@ -409,7 +417,7 @@ func TestBuildT38SDP(t *testing.T) {
 }
 
 func TestBuildT38SDP_NilConfig(t *testing.T) {
-	sdp := BuildT38SDP(nil, "192.168.1.100", 5000)
+	sdp := BuildT38SDP(nil, "127.0.0.1", 0)
 
 	// Should use default config
 	if !strings.Contains(sdp, "a=T38MaxBitRate:14400") {

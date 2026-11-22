@@ -1,6 +1,8 @@
 package commands
 
 import (
+	"context"
+	"log"
 	"net"
 
 	"karl/internal"
@@ -64,4 +66,35 @@ func selectMediaIPs(ifaceSelector *internal.InterfaceSelector, config *internal.
 	}
 
 	return "127.0.0.1", "127.0.0.1"
+}
+
+// setupICEAgent creates an ICE session agent for a call leg when ICE is negotiated.
+// controlling should be true for the offer side, false for the answer side.
+func setupICEAgent(leg *internal.CallLeg, parsedSDP *ParsedSDP, flags *ng.ParsedFlags, config *internal.Config, controlling bool) {
+	if flags.ICERemove || flags.ICELite {
+		return
+	}
+	if !flags.ICEForce && !parsedSDP.HasICE {
+		return
+	}
+
+	iceConfig := internal.ICEAgentConfig{
+		Controlling: controlling,
+		Lite:        flags.ICELite,
+		RemoteUfrag: parsedSDP.ICEUfrag,
+		RemotePwd:   parsedSDP.ICEPwd,
+	}
+	if config.WebRTC.Enabled {
+		for _, s := range config.WebRTC.StunServers {
+			iceConfig.STUNServers = append(iceConfig.STUNServers, s)
+		}
+	}
+
+	agent, err := internal.NewICESessionAgent(iceConfig)
+	if err != nil {
+		log.Printf("Warning: failed to create ICE agent: %v", err)
+		return
+	}
+	leg.ICEAgent = agent
+	go agent.GatherCandidates(context.Background())
 }

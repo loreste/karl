@@ -2,7 +2,10 @@ package internal
 
 import (
 	"fmt"
+	"log"
 	"net"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -42,6 +45,9 @@ type T38Session struct {
 	Stats         *T38Stats
 	CreatedAt     time.Time
 	LastActivity  time.Time
+	conn          *net.UDPConn
+	stopCh        chan struct{}
+	stopOnce      sync.Once
 	mu            sync.RWMutex
 }
 
@@ -134,17 +140,31 @@ func (gw *T38Gateway) CreateSession(callID string, localIP net.IP, localPort int
 
 	sessionID := fmt.Sprintf("t38-%s-%d", callID, time.Now().UnixNano())
 
+	addr := &net.UDPAddr{IP: localIP, Port: localPort}
+	conn, err := net.ListenUDP("udp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to listen on %s:%d: %w", localIP, localPort, err)
+	}
+
+	// If port was 0, resolve the actual port assigned by the OS
+	actualPort := localPort
+	if localPort == 0 {
+		actualPort = conn.LocalAddr().(*net.UDPAddr).Port
+	}
+
 	session := &T38Session{
 		ID:           sessionID,
 		CallID:       callID,
 		State:        T38StateSetup,
 		LocalIP:      localIP,
-		LocalPort:    localPort,
+		LocalPort:    actualPort,
 		Direction:    T38DirectionBoth,
 		Config:       gw.config,
 		Stats:        &T38Stats{},
 		CreatedAt:    time.Now(),
 		LastActivity: time.Now(),
+		conn:         conn,
+		stopCh:       make(chan struct{}),
 	}
 
 	gw.sessions[sessionID] = session
@@ -168,6 +188,10 @@ func (gw *T38Gateway) SetRemoteEndpoint(sessionID string, remoteIP net.IP, remot
 	session.RemotePort = remotePort
 	session.State = T38StateActive
 	session.LastActivity = time.Now()
+
+	if session.conn != nil {
+		go session.StartRelay()
+	}
 
 	return nil
 }
@@ -254,6 +278,19 @@ func (gw *T38Gateway) SendPacket(sessionID string, ifp *T38IFP) error {
 	// Build packet
 	packet := gw.buildIFP(ifp)
 
+	if session.conn == nil {
+		return fmt.Errorf("T.38 session %s has no UDP connection", sessionID)
+	}
+	if session.RemoteIP == nil {
+		return fmt.Errorf("T.38 session %s has no remote endpoint", sessionID)
+	}
+
+	remoteAddr := &net.UDPAddr{IP: session.RemoteIP, Port: session.RemotePort}
+	if _, err := session.conn.WriteToUDP(packet, remoteAddr); err != nil {
+		session.Stats.Errors++
+		return fmt.Errorf("failed to send T.38 packet: %w", err)
+	}
+
 	session.Stats.PacketsSent++
 	session.Stats.BytesSent += uint64(len(packet))
 	session.LastActivity = time.Now()
@@ -292,6 +329,7 @@ func (gw *T38Gateway) CompleteSession(sessionID string) error {
 	defer session.mu.Unlock()
 
 	session.State = T38StateComplete
+	session.StopRelay()
 	return nil
 }
 
@@ -368,9 +406,141 @@ func BuildT38SDP(config *T38Config, localIP string, localPort int) string {
 // ParseT38SDP parses T.38 attributes from SDP
 func ParseT38SDP(sdp string) *T38Config {
 	config := DefaultT38Config()
-	// Basic parsing would be implemented here
-	// For now return default config
+
+	for _, line := range strings.Split(sdp, "\n") {
+		line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))
+
+		if strings.HasPrefix(line, "a=T38MaxBitRate:") {
+			if v, err := strconv.Atoi(strings.TrimPrefix(line, "a=T38MaxBitRate:")); err == nil {
+				config.MaxBitRate = v
+			}
+		} else if strings.HasPrefix(line, "a=T38FaxRateManagement:") {
+			config.RateMgmt = strings.TrimPrefix(line, "a=T38FaxRateManagement:")
+		} else if strings.HasPrefix(line, "a=T38FaxUdpEC:") {
+			config.UDPECMode = strings.TrimPrefix(line, "a=T38FaxUdpEC:")
+		} else if strings.HasPrefix(line, "a=T38FaxMaxBuffer:") {
+			if v, err := strconv.Atoi(strings.TrimPrefix(line, "a=T38FaxMaxBuffer:")); err == nil {
+				config.MaxBuffer = v
+			}
+		} else if line == "a=T38FaxFillBitRemoval" {
+			config.FillBitRemoval = true
+		} else if line == "a=T38FaxTranscodingMMR" {
+			config.TranscodingMMR = true
+		} else if line == "a=T38FaxTranscodingJBIG" {
+			config.TranscodingJBIG = true
+		}
+	}
+
 	return config
+}
+
+// StartRelay runs the UDPTL relay loop, reading packets from the local conn
+// and forwarding them to the remote endpoint. Blocks until StopRelay is called.
+func (s *T38Session) StartRelay() {
+	buf := make([]byte, 4096) // ponytail: fixed 4K buffer, grow if jumbo UDPTL needed
+	for {
+		select {
+		case <-s.stopCh:
+			return
+		default:
+		}
+
+		// Set a read deadline so we can check stopCh periodically
+		s.conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+		n, _, err := s.conn.ReadFromUDP(buf)
+		if err != nil {
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				continue
+			}
+			select {
+			case <-s.stopCh:
+				return
+			default:
+			}
+			log.Printf("T.38 relay read error session=%s: %v", s.ID, err)
+			continue
+		}
+
+		packet := make([]byte, n)
+		copy(packet, buf[:n])
+
+		s.mu.Lock()
+		s.Stats.PacketsRecv++
+		s.Stats.BytesRecv += uint64(n)
+		s.LastActivity = time.Now()
+
+		remoteIP := s.RemoteIP
+		remotePort := s.RemotePort
+		config := s.Config
+		s.mu.Unlock()
+
+		if remoteIP == nil {
+			continue
+		}
+
+		// Parse the IFP to inspect / add redundancy
+		ifp, err := parseIFPPacket(packet)
+		if err != nil {
+			s.mu.Lock()
+			s.Stats.Errors++
+			s.mu.Unlock()
+			continue
+		}
+
+		// Add redundancy from config
+		outPacket := buildIFPPacket(ifp, config)
+
+		remoteAddr := &net.UDPAddr{IP: remoteIP, Port: remotePort}
+		if _, err := s.conn.WriteToUDP(outPacket, remoteAddr); err != nil {
+			s.mu.Lock()
+			s.Stats.Errors++
+			s.mu.Unlock()
+			log.Printf("T.38 relay write error session=%s: %v", s.ID, err)
+			continue
+		}
+
+		s.mu.Lock()
+		s.Stats.PacketsSent++
+		s.Stats.BytesSent += uint64(len(outPacket))
+		s.mu.Unlock()
+	}
+}
+
+// StopRelay signals the relay goroutine to stop and closes the UDP conn.
+func (s *T38Session) StopRelay() {
+	s.stopOnce.Do(func() {
+		close(s.stopCh)
+		if s.conn != nil {
+			s.conn.Close()
+		}
+	})
+}
+
+// parseIFPPacket is a standalone IFP parser (no gateway receiver needed).
+func parseIFPPacket(packet []byte) (*T38IFP, error) {
+	if len(packet) < 2 {
+		return nil, fmt.Errorf("T.38 packet too short")
+	}
+	return &T38IFP{
+		Type:   T38IFPType(packet[0] >> 4),
+		SeqNum: uint16(packet[0]&0x0F)<<8 | uint16(packet[1]),
+		Data:   packet[2:],
+	}, nil
+}
+
+// buildIFPPacket builds a UDPTL packet from an IFP, adding redundancy per config.
+func buildIFPPacket(ifp *T38IFP, config *T38Config) []byte {
+	packet := make([]byte, 2+len(ifp.Data))
+	packet[0] = byte(ifp.Type)<<4 | byte(ifp.SeqNum>>8)
+	packet[1] = byte(ifp.SeqNum & 0xFF)
+	copy(packet[2:], ifp.Data)
+
+	if config != nil && config.UDPECMode == "t38UDPRedundancy" && len(ifp.Redundant) > 0 {
+		for _, redundant := range ifp.Redundant {
+			packet = append(packet, redundant...)
+		}
+	}
+	return packet
 }
 
 // Cleanup removes old completed sessions

@@ -258,6 +258,9 @@ func (h *AnswerHandler) processAnswerSDP(session *internal.MediaSession, sdp str
 	// Handle ICE based on flags
 	h.handleICE(calleeLeg, parsedSDP, flags)
 
+	// Set up ICE agent when ICE is negotiated
+	setupICEAgent(calleeLeg, parsedSDP, flags, h.config, false)
+
 	// Handle SRTP/DTLS based on flags
 	h.handleSRTPDTLS(calleeLeg, parsedSDP, flags)
 

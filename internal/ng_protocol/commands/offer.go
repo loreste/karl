@@ -249,6 +249,9 @@ func (h *OfferHandler) processOfferSDP(session *internal.MediaSession, sdp strin
 	// Handle ICE based on flags
 	h.handleICE(callerLeg, parsedSDP, flags)
 
+	// Set up ICE agent when ICE is negotiated
+	setupICEAgent(callerLeg, parsedSDP, flags, h.config, true)
+
 	// Handle SRTP/DTLS based on flags
 	h.handleSRTPDTLS(callerLeg, parsedSDP, flags)
 
