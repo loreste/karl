@@ -7,6 +7,8 @@ metadata:
 data:
   config.json: |
     {
+      "version": "0.5.0",
+
       "ng_protocol": {
         "enabled": true,
         "udp_port": 22222,
@@ -93,5 +95,21 @@ data:
         "packet_loss_threshold": 0.05,
         "jitter_threshold": 50.0,
         "notify_admin": false
+      },
+
+      "hep": {
+        "hep_enabled": false,
+        "hep_server": "",
+        "hep_capture_id": 1,
+        "hep_proto": "udp"
+      },
+
+      "cluster": {
+        "enabled": false,
+        "node_id": "",
+        "node_address": "",
+        "quorum_size": 2,
+        "replication_factor": 2,
+        "enable_fencing": false
       }
     }
